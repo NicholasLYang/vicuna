@@ -4,7 +4,10 @@ module.exports = grammar({
   rules: {
     // TODO: add the actual grammar rules
     source_file: ($) =>
-      seq(repeat(seq($._expression, "\n")), optional($._expression)),
+      seq(
+        repeat(seq($._expression, token(";"), token("\n"))),
+        optional($._expression)
+      ),
     _expression: ($) => $._arithmetic_expression,
     _arithmetic_expression: ($) =>
       choice(

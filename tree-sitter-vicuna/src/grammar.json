@@ -14,8 +14,18 @@
                 "name": "_expression"
               },
               {
-                "type": "STRING",
-                "value": "\n"
+                "type": "TOKEN",
+                "content": {
+                  "type": "STRING",
+                  "value": ";"
+                }
+              },
+              {
+                "type": "TOKEN",
+                "content": {
+                  "type": "STRING",
+                  "value": "\n"
+                }
               }
             ]
           }

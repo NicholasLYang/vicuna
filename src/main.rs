@@ -1,15 +1,15 @@
+use std::fs::read_to_string;
 use tree_sitter::{Parser, Language, Tree, TreeCursor};
 use anyhow::{anyhow, Result};
-use crate::ast::{Expr, Value};
+use crate::ast::{BinaryOp, Expr, Value};
 
 mod ast;
 
 extern "C" { fn tree_sitter_vicuna() -> Language; }
 
 fn main() -> Result<()> {
-    let source = "foo(1, 11)(12)";
-    let tree = parse_into_cst(source)?.unwrap();
-    println!("{}", tree.root_node().to_sexp());
+    let source = read_to_string("tree-sitter-vicuna/example-file")?;
+    let tree = parse_into_cst(&source)?.unwrap();
     let expr = parse_source_file(source.as_bytes(), &mut tree.walk())?;
     println!("{:?}", expr);
     Ok(())
@@ -26,6 +26,10 @@ fn parse_source_file(source: &[u8], cursor: &mut TreeCursor) -> Result<Vec<Expr>
     let mut expressions = Vec::new();
     while has_next_expr {
         expressions.push(parse_cst_into_expr(source, cursor)?);
+        // Skip ";"
+        cursor.goto_next_sibling();
+        // Skip "\n"
+        cursor.goto_next_sibling();
         has_next_expr = cursor.goto_next_sibling();
     }
 
@@ -51,6 +55,32 @@ fn parse_cst_into_expr(source: &[u8], cursor: &mut TreeCursor) -> Result<Expr> {
             cursor.goto_parent();
             result
         },
+        "binary_expression" => {
+            cursor.goto_first_child();
+            let lhs = parse_cst_into_expr(source, cursor)?;
+
+            if !cursor.goto_next_sibling() {
+                return Err(anyhow!("Missing operator and rhs in binary expression"))
+            }
+
+            let op_node = cursor.node();
+            let op = match op_node.utf8_text(source)? {
+                "+" => BinaryOp::Add,
+                "*" => BinaryOp::Multiply,
+                "/" => BinaryOp::Divide,
+                "-" => BinaryOp::Subtract,
+                op => return Err(anyhow!("Unknown operator `{}`", op))
+            };
+
+            if !cursor.goto_next_sibling() {
+                return Err(anyhow!("Missing operator and rhs in binary expression"))
+            }
+
+            let rhs = parse_cst_into_expr(source, cursor)?;
+
+            cursor.goto_parent();
+            Ok(Expr::Binary(op, Box::new(lhs), Box::new(rhs)))
+        }
         "call_expression" => {
             let mut callee = None;
             let mut calls = Vec::new();

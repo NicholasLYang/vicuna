@@ -32,7 +32,7 @@ pub enum Value {
 }
 
 #[derive(Debug)]
-enum BinaryOp {
+pub enum BinaryOp {
     Add,
     Subtract,
     Divide,
