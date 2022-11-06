@@ -32,25 +32,13 @@
     "fields": {}
   },
   {
-    "type": "call_expression",
+    "type": "call",
     "named": true,
     "fields": {
-      "arguments": {
+      "argument": {
         "multiple": true,
         "required": false,
         "types": [
-          {
-            "type": "(",
-            "named": false
-          },
-          {
-            "type": ")",
-            "named": false
-          },
-          {
-            "type": ",",
-            "named": false
-          },
           {
             "type": "binary_expression",
             "named": true
@@ -65,6 +53,22 @@
           },
           {
             "type": "unary_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "call_expression",
+    "named": true,
+    "fields": {
+      "call": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "call",
             "named": true
           }
         ]

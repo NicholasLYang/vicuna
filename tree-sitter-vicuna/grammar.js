@@ -3,7 +3,8 @@ module.exports = grammar({
 
   rules: {
     // TODO: add the actual grammar rules
-    source_file: ($) => seq(repeat(seq($._expression, "\n")), optional($._expression)),
+    source_file: ($) =>
+      seq(repeat(seq($._expression, "\n")), optional($._expression)),
     _expression: ($) => $._arithmetic_expression,
     _arithmetic_expression: ($) =>
       choice(
@@ -26,14 +27,20 @@ module.exports = grammar({
         4,
         seq(
           field("callee", $.primary_expression),
-          repeat(field("arguments", seq(token("("), repeat(seq($._expression, ",")), optional($._expression), token(")"))))
+          repeat1(field("call", $.call))
         )
       ),
-    primary_expression: ($) => choice($.variable, $.value),
+    call: ($) =>
+      seq(
+        token("("),
+        repeat(seq(field("argument", $._expression), token(","))),
+        optional(field("argument", $._expression)),
+        token(")")
+      ),
+    primary_expression: ($) => prec(8, choice($.variable, $.value)),
     variable: ($) => /[A-Za-z_][A-Za-z0-9_]*/,
-    value: ($) =>
-      choice($.float, $.integer, $.string, $.boolean),
-    boolean: $ => choice("true", "false"),
+    value: ($) => choice($.float, $.integer, $.string, $.boolean),
+    boolean: ($) => choice("true", "false"),
     float: ($) => /[0-9]+\.[0-9]+/,
     integer: ($) => /[0-9]+/,
     string: ($) => /"[^"]*"/,

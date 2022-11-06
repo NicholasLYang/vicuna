@@ -7,8 +7,9 @@ mod ast;
 extern "C" { fn tree_sitter_vicuna() -> Language; }
 
 fn main() -> Result<()> {
-    let source = "10";
+    let source = "foo(1, 11)(12)";
     let tree = parse_into_cst(source)?.unwrap();
+    println!("{}", tree.root_node().to_sexp());
     let expr = parse_source_file(source.as_bytes(), &mut tree.walk())?;
     println!("{:?}", expr);
     Ok(())
@@ -59,8 +60,8 @@ fn parse_cst_into_expr(source: &[u8], cursor: &mut TreeCursor) -> Result<Expr> {
                     Some("callee") => {
                         callee = Some(parse_cst_into_expr(source, cursor)?);
                     }
-                    Some("arguments") => {
-                        calls.push(parse_call_arguments(source, cursor)?)
+                    Some("call") => {
+                        calls.push(parse_call_arguments(source, cursor)?);
                     }
                     Some(unknown_field) => {
                         return Err(anyhow!("Unhandled field `{}` in call_expression", unknown_field))
@@ -86,7 +87,17 @@ fn parse_cst_into_expr(source: &[u8], cursor: &mut TreeCursor) -> Result<Expr> {
 }
 
 fn parse_call_arguments(source: &[u8], cursor: &mut TreeCursor) -> Result<Vec<Expr>> {
-    Ok(Vec::new())
+    let mut arguments = Vec::new();
+    let mut has_next_child = cursor.goto_first_child();
+    while has_next_child {
+        if let Some("argument") = cursor.field_name() {
+            arguments.push(parse_cst_into_expr(source, cursor)?);
+        }
+        has_next_child = cursor.goto_next_sibling();
+    }
+
+    cursor.goto_parent();
+    Ok(arguments)
 }
 
 fn parse_cst_into_value(source: &[u8], cursor: &mut TreeCursor) -> Result<Value> {
