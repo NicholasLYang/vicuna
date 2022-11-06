@@ -25,14 +25,15 @@ module.exports = grammar({
       prec.left(
         4,
         seq(
-          $.primary_expression,
-          repeat(choice(seq(token("("), $._expression, token(")"))))
+          field("callee", $.primary_expression),
+          repeat(field("arguments", seq(token("("), repeat(seq($._expression, ",")), optional($._expression), token(")"))))
         )
       ),
     primary_expression: ($) => choice($.variable, $.value),
     variable: ($) => /[A-Za-z_][A-Za-z0-9_]*/,
     value: ($) =>
-      choice($.float, $.integer, $.string, token("true"), token("false")),
+      choice($.float, $.integer, $.string, $.boolean),
+    boolean: $ => choice("true", "false"),
     float: ($) => /[0-9]+\.[0-9]+/,
     integer: ($) => /[0-9]+/,
     string: ($) => /"[^"]*"/,
