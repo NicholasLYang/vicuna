@@ -38,10 +38,10 @@ very...constrained compilation target. With Saber I wrote and rewrote multiple c
 with lots of static analysis and fancy symbol tables; I added my own runtime with garbage collection; 
 I spend a lot of time thinking about memory layout. 
 
-You see, the difficulty in compiling Saber is that the source language, Saber, is very different from the 
-target language, WebAssembly. Saber has all these high level concepts like closures, garbage collection, strings,
+You see, the difficulty in compiling Saber is that Saber, the source language, is very different from WebAssembly, 
+the target language. Saber has all these high level concepts like closures, garbage collection, strings,
 while WebAssembly has low level concepts like linear memory, indices, and load/stores. Getting a compiler to translate
-between the two is rather challenging. But you know what does have high level concepts like closures,
+from one to the other is rather challenging. But you know what does have high level concepts like closures,
 garbage collection and strings? JavaScript! By compiling to JavaScript I'm saving myself so much pain.
 And I didn't even get to the nasty stuff around interop, calling Web APIs, or debugging.
 
@@ -51,5 +51,5 @@ But for my skills, compiling to JavaScript is the best plan.
 
 More grandly, I'd agree with the aphorism to "always bet on JavaScript". JavaScript may be maligned, but
 it's ubiquitous, and it works pretty darn well. It's a rare high level, dynamic language that performs
-decently. It has some really great libraries (and some...less great ones). It's not going anywhere, so
-we might as well make it as fun to write as possible.
+decently. It has some really great libraries (and some...less great ones). As optimistic as I am about WebAssembly,
+I don't anticipate that we'll move away from JavaScript anytime soon.
