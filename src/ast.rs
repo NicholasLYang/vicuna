@@ -16,9 +16,7 @@ pub enum Expr {
         calls: Vec<Vec<Expr>>
     },
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
-    Unary(UnaryOp, Box<Expr>),
-    If { condition: Box<Expr>, then_block: Box<Expr>, else_block: Box<Expr> },
-    Function { arguments: Vec<(String, TypeSig)>, body: Vec<Expr> }
+    Unary(UnaryOp, Box<Expr>)
 }
 
 #[derive(Debug)]

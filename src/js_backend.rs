@@ -1,6 +1,7 @@
 use std::io::Write;
 use crate::{BinaryOp, Expr, Stmt, Value};
 use anyhow::Result;
+use crate::ast::UnaryOp;
 
 pub struct JsBackend<T: Write> {
     output: T
@@ -32,7 +33,7 @@ impl<T: Write> JsBackend<T> {
             }
         }
 
-        self.output.write(b";\n")?;
+        self.output.write_all(b";\n")?;
         Ok(())
     }
 
@@ -44,23 +45,23 @@ impl<T: Write> JsBackend<T> {
             Expr::Variable(name) => {
                 // TODO: Figure out better way of mapping special names
                 if name == "print" {
-                    self.output.write(b"console.log")?;
+                    self.output.write_all(b"console.log")?;
                 } else {
-                    self.output.write(name.as_bytes())?;
+                    self.output.write_all(name.as_bytes())?;
                 }
             }
             Expr::Call { callee, calls } => {
                 self.emit_expr(callee)?;
                 for call in calls {
-                    self.output.write(b"(")?;
+                    self.output.write_all(b"(")?;
                     let arity = call.len();
                     for (i, arg) in call.iter().enumerate() {
                         self.emit_expr(arg)?;
                         if i < arity - 1 {
-                            self.output.write(b", ")?;
+                            self.output.write_all(b", ")?;
                         }
                     }
-                    self.output.write(b")")?;
+                    self.output.write_all(b")")?;
                 }
             }
             Expr::Binary(op, lhs, rhs) => {
@@ -72,14 +73,17 @@ impl<T: Write> JsBackend<T> {
                 };
 
                 self.emit_expr(lhs)?;
-                self.output.write(op_str)?;
+                self.output.write_all(op_str)?;
                 self.emit_expr(rhs)?;
             }
             Expr::Unary(op, rhs) => {
-
+                let op_str = match op {
+                    UnaryOp::Negate => b'-',
+                    UnaryOp::Not => b'!'
+                };
+                self.output.write_all(&[op_str])?;
+                self.emit_expr(rhs)?;
             }
-            Expr::If { .. } => {}
-            Expr::Function { .. } => {}
         }
 
         Ok(())
