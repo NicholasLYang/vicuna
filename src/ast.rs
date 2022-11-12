@@ -1,4 +1,10 @@
 #[derive(Debug)]
+pub enum Stmt {
+    Let(String, Expr),
+    Expr(Expr)
+}
+
+#[derive(Debug)]
 pub enum Expr {
     Value(Value),
     Variable(String),
@@ -25,8 +31,8 @@ pub enum TypeSig {
 
 #[derive(Debug)]
 pub enum Value {
-    I64(i64),
-    F64(f64),
+    I32(i32),
+    F32(f32),
     Bool(bool),
     String(String)
 }
@@ -40,7 +46,7 @@ pub enum BinaryOp {
 }
 
 #[derive(Debug)]
-enum UnaryOp {
+pub enum UnaryOp {
     Negate,
     Not
 }
