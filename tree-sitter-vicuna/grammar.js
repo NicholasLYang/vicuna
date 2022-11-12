@@ -3,14 +3,30 @@ module.exports = grammar({
 
   rules: {
     // TODO: add the actual grammar rules
-    source_file: ($) =>
-      seq(
-        repeat(seq($.statement, token(";"), token("\n"))),
-        optional(seq($.statement, token(";")))
-      ),
-    statement: ($) => choice($.expression, $.let_declaration),
+    source_file: ($) => seq(repeat(seq($.statement))),
+    statement: ($) =>
+      choice(seq($.expression, token(";")), $.if_expression, $.let_declaration),
     let_declaration: ($) =>
-      seq(token("let"), $.variable, token("="), $.expression),
+      seq(
+        token("let"),
+        $.variable,
+        token("="),
+        choice(seq($.expression, token(";")), $.if_expression)
+      ),
+    if_expression: ($) =>
+      seq(
+        token("if"),
+        field("condition", $.expression),
+        field("then_block", $.block),
+        optional(field("else_block", seq(token("else"), $.block)))
+      ),
+    block: ($) =>
+      seq(
+        token("{"),
+        repeat(seq($.statement, token(";"))),
+        optional(choice($.expression, $.if_expression)),
+        token("}")
+      ),
     expression: ($) => $._arithmetic_expression,
     _arithmetic_expression: ($) =>
       choice(

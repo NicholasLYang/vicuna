@@ -1,7 +1,7 @@
 #[derive(Debug)]
 pub enum Stmt {
     Let(String, Expr),
-    Expr(Expr)
+    Expr(Expr),
 }
 
 #[derive(Debug)]
@@ -13,10 +13,17 @@ pub enum Expr {
     // into a proper enum with variants for Call, Index, and Field
     Call {
         callee: Box<Expr>,
-        calls: Vec<Vec<Expr>>
+        calls: Vec<Vec<Expr>>,
     },
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
-    Unary(UnaryOp, Box<Expr>)
+    Unary(UnaryOp, Box<Expr>),
+    // If expressions cannot be nested inside other expressions.
+    // In the future they might be able to be with parentheses.
+    If {
+        condition: Box<Expr>,
+        then_block: Box<Expr>,
+        else_block: Box<Expr>,
+    },
 }
 
 #[derive(Debug)]
@@ -24,7 +31,7 @@ pub enum TypeSig {
     I64,
     F64,
     String,
-    Bool
+    Bool,
 }
 
 #[derive(Debug)]
@@ -32,7 +39,7 @@ pub enum Value {
     I32(i32),
     F32(f32),
     Bool(bool),
-    String(String)
+    String(String),
 }
 
 #[derive(Debug)]
@@ -40,11 +47,11 @@ pub enum BinaryOp {
     Add,
     Subtract,
     Divide,
-    Multiply
+    Multiply,
 }
 
 #[derive(Debug)]
 pub enum UnaryOp {
     Negate,
-    Not
+    Not,
 }

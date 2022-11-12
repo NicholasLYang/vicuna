@@ -1,0 +1,5 @@
+if foo {
+  print("10")
+} else {
+  print("11")
+}
