@@ -1,7 +1,27 @@
 #[derive(Debug)]
 pub enum Stmt {
     Let(String, Expr),
+    /// Let assigned to an if expression.
+    /// ```
+    ///  let a = if foo {
+    ///    1
+    ///  } else {
+    ///    2
+    ///  }
+    /// ```
+    LetIf {
+        name: String,
+        condition: Expr,
+        then_block: ExpressionBlock,
+        else_block: ExpressionBlock,
+    },
     Expr(Expr),
+}
+
+#[derive(Debug)]
+pub struct ExpressionBlock {
+    pub stmts: Vec<Stmt>,
+    pub end_expr: Option<Expr>,
 }
 
 #[derive(Debug)]
@@ -17,13 +37,6 @@ pub enum Expr {
     },
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
-    // If expressions cannot be nested inside other expressions.
-    // In the future they might be able to be with parentheses.
-    If {
-        condition: Box<Expr>,
-        then_block: Box<Expr>,
-        else_block: Box<Expr>,
-    },
 }
 
 #[derive(Debug)]

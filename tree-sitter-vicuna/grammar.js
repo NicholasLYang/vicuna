@@ -5,28 +5,44 @@ module.exports = grammar({
     // TODO: add the actual grammar rules
     source_file: ($) => seq(repeat(seq($.statement))),
     statement: ($) =>
-      choice(seq($.expression, token(";")), $.if_expression, $.let_declaration),
+      choice(
+        $.expression_statement,
+        $.if_statement,
+        $.let_declaration,
+        $.let_if_declaration
+      ),
+    if_statement: ($) =>
+      seq(
+        token("if"),
+        field("condition", $.expression),
+        field("then_block", seq(token("{"), repeat($.statement), token("}"))),
+        optional(
+          field(
+            "else_block",
+            seq(token("else"), token("{"), repeat($.statement), token("}"))
+          )
+        )
+      ),
     let_declaration: ($) =>
+      seq(token("let"), $.variable, token("="), $.expression, token(";")),
+    let_if_declaration: ($) =>
       seq(
         token("let"),
         $.variable,
         token("="),
-        choice(seq($.expression, token(";")), $.if_expression)
-      ),
-    if_expression: ($) =>
-      seq(
         token("if"),
         field("condition", $.expression),
-        field("then_block", $.block),
-        optional(field("else_block", seq(token("else"), $.block)))
+        field("then_block", $.expression_block),
+        optional(field("else_block", seq(token("else"), $.expression_block)))
       ),
-    block: ($) =>
+    expression_block: ($) =>
       seq(
         token("{"),
         repeat(seq($.statement, token(";"))),
-        optional(choice($.expression, $.if_expression)),
+        optional($.expression),
         token("}")
       ),
+    expression_statement: ($) => seq($.expression, token(";")),
     expression: ($) => $._arithmetic_expression,
     _arithmetic_expression: ($) =>
       choice(

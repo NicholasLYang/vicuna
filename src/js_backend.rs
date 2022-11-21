@@ -1,17 +1,15 @@
-use std::io::Write;
+use crate::ast::UnaryOp;
 use crate::{BinaryOp, Expr, Stmt, Value};
 use anyhow::Result;
-use crate::ast::UnaryOp;
+use std::io::Write;
 
 pub struct JsBackend<T: Write> {
-    output: T
+    output: T,
 }
 
 impl<T: Write> JsBackend<T> {
     pub fn new(output: T) -> JsBackend<T> {
-        Self {
-            output
-        }
+        Self { output }
     }
 
     pub fn emit_program(&mut self, program: &[Stmt]) -> Result<()> {
@@ -27,13 +25,42 @@ impl<T: Write> JsBackend<T> {
             Stmt::Let(name, rhs) => {
                 write!(self.output, "let {} = ", name)?;
                 self.emit_expr(rhs)?;
+                self.output.write_all(b";\n")?;
+            }
+            Stmt::LetIf {
+                name,
+                condition,
+                then_block,
+                else_block,
+            } => {
+                writeln!(self.output, "let {};", name)?;
+                write!(self.output, "if (")?;
+                self.emit_expr(condition)?;
+                writeln!(self.output, ") {{")?;
+                for stmt in &then_block.stmts {
+                    self.emit_stmt(stmt)?;
+                }
+                if let Some(end_expr) = &then_block.end_expr {
+                    write!(self.output, "{} = ", name)?;
+                    self.emit_expr(end_expr)?;
+                    writeln!(self.output, ";")?;
+                }
+                writeln!(self.output, "}} else {{")?;
+                for stmt in &else_block.stmts {
+                    self.emit_stmt(&stmt)?;
+                }
+                if let Some(end_expr) = &else_block.end_expr {
+                    write!(self.output, "{} = ", name)?;
+                    self.emit_expr(&end_expr)?;
+                    writeln!(self.output, ";")?;
+                }
+                writeln!(self.output, "}}")?;
             }
             Stmt::Expr(expr) => {
                 self.emit_expr(expr)?;
+                self.output.write_all(b";\n")?;
             }
         }
-
-        self.output.write_all(b";\n")?;
         Ok(())
     }
 
@@ -69,7 +96,7 @@ impl<T: Write> JsBackend<T> {
                     BinaryOp::Add => b"+",
                     BinaryOp::Subtract => b"-",
                     BinaryOp::Divide => b"/",
-                    BinaryOp::Multiply => b"*"
+                    BinaryOp::Multiply => b"*",
                 };
 
                 self.emit_expr(lhs)?;
@@ -79,7 +106,7 @@ impl<T: Write> JsBackend<T> {
             Expr::Unary(op, rhs) => {
                 let op_str = match op {
                     UnaryOp::Negate => b'-',
-                    UnaryOp::Not => b'!'
+                    UnaryOp::Not => b'!',
                 };
                 self.output.write_all(&[op_str])?;
                 self.emit_expr(rhs)?;
@@ -98,7 +125,7 @@ impl<T: Write> JsBackend<T> {
                 write!(self.output, "{}", f)?;
             }
             Value::Bool(bool) => {
-                write!(self.output, "{}", if *bool { "true"} else { "false"})?;
+                write!(self.output, "{}", if *bool { "true" } else { "false" })?;
             }
             Value::String(s) => {
                 write!(self.output, "\"{}\"", s)?;

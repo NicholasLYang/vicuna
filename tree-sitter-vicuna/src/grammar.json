@@ -22,28 +22,115 @@
       "type": "CHOICE",
       "members": [
         {
-          "type": "SEQ",
-          "members": [
-            {
-              "type": "SYMBOL",
-              "name": "expression"
-            },
-            {
-              "type": "TOKEN",
-              "content": {
-                "type": "STRING",
-                "value": ";"
-              }
-            }
-          ]
+          "type": "SYMBOL",
+          "name": "expression_statement"
         },
         {
           "type": "SYMBOL",
-          "name": "if_expression"
+          "name": "if_statement"
         },
         {
           "type": "SYMBOL",
           "name": "let_declaration"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "let_if_declaration"
+        }
+      ]
+    },
+    "if_statement": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "TOKEN",
+          "content": {
+            "type": "STRING",
+            "value": "if"
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "condition",
+          "content": {
+            "type": "SYMBOL",
+            "name": "expression"
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "then_block",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "TOKEN",
+                "content": {
+                  "type": "STRING",
+                  "value": "{"
+                }
+              },
+              {
+                "type": "REPEAT",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "statement"
+                }
+              },
+              {
+                "type": "TOKEN",
+                "content": {
+                  "type": "STRING",
+                  "value": "}"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "else_block",
+              "content": {
+                "type": "SEQ",
+                "members": [
+                  {
+                    "type": "TOKEN",
+                    "content": {
+                      "type": "STRING",
+                      "value": "else"
+                    }
+                  },
+                  {
+                    "type": "TOKEN",
+                    "content": {
+                      "type": "STRING",
+                      "value": "{"
+                    }
+                  },
+                  {
+                    "type": "REPEAT",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "statement"
+                    }
+                  },
+                  {
+                    "type": "TOKEN",
+                    "content": {
+                      "type": "STRING",
+                      "value": "}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         }
       ]
     },
@@ -69,35 +156,39 @@
           }
         },
         {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "SEQ",
-              "members": [
-                {
-                  "type": "SYMBOL",
-                  "name": "expression"
-                },
-                {
-                  "type": "TOKEN",
-                  "content": {
-                    "type": "STRING",
-                    "value": ";"
-                  }
-                }
-              ]
-            },
-            {
-              "type": "SYMBOL",
-              "name": "if_expression"
-            }
-          ]
+          "type": "SYMBOL",
+          "name": "expression"
+        },
+        {
+          "type": "TOKEN",
+          "content": {
+            "type": "STRING",
+            "value": ";"
+          }
         }
       ]
     },
-    "if_expression": {
+    "let_if_declaration": {
       "type": "SEQ",
       "members": [
+        {
+          "type": "TOKEN",
+          "content": {
+            "type": "STRING",
+            "value": "let"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "variable"
+        },
+        {
+          "type": "TOKEN",
+          "content": {
+            "type": "STRING",
+            "value": "="
+          }
+        },
         {
           "type": "TOKEN",
           "content": {
@@ -106,15 +197,19 @@
           }
         },
         {
-          "type": "SYMBOL",
-          "name": "expression"
+          "type": "FIELD",
+          "name": "condition",
+          "content": {
+            "type": "SYMBOL",
+            "name": "expression"
+          }
         },
         {
           "type": "FIELD",
           "name": "then_block",
           "content": {
             "type": "SYMBOL",
-            "name": "block"
+            "name": "expression_block"
           }
         },
         {
@@ -135,7 +230,7 @@
                   },
                   {
                     "type": "SYMBOL",
-                    "name": "block"
+                    "name": "expression_block"
                   }
                 ]
               }
@@ -147,7 +242,7 @@
         }
       ]
     },
-    "block": {
+    "expression_block": {
       "type": "SEQ",
       "members": [
         {
@@ -180,17 +275,8 @@
           "type": "CHOICE",
           "members": [
             {
-              "type": "CHOICE",
-              "members": [
-                {
-                  "type": "SYMBOL",
-                  "name": "expression"
-                },
-                {
-                  "type": "SYMBOL",
-                  "name": "if_expression"
-                }
-              ]
+              "type": "SYMBOL",
+              "name": "expression"
             },
             {
               "type": "BLANK"
@@ -202,6 +288,22 @@
           "content": {
             "type": "STRING",
             "value": "}"
+          }
+        }
+      ]
+    },
+    "expression_statement": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "expression"
+        },
+        {
+          "type": "TOKEN",
+          "content": {
+            "type": "STRING",
+            "value": ";"
           }
         }
       ]
