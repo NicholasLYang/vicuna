@@ -1,6 +1,6 @@
 use crate::compiler;
 use anyhow::Result;
-use axum::http::{Method, StatusCode};
+use axum::http::StatusCode;
 use axum::{
     routing::{get, post},
     Json, Router,
@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::net::SocketAddr;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 
 /// Runs server for playground. Receives code and compiles it to JS
 #[tokio::main]
