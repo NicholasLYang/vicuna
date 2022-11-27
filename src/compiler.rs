@@ -19,8 +19,6 @@ pub fn compile(source: &str, output: impl Write) -> Result<()> {
     let program = match ast_builder.build_ast() {
         Ok(program) => program,
         Err(err) => {
-            println!("{}", source);
-            println!("{}", tree.root_node().to_sexp());
             return Err(err);
         }
     };
