@@ -9,5 +9,5 @@ fn main() {
     cc::Build::new()
         .include(&dir)
         .file(dir.join("parser.c"))
-        .compile("tree-sitter-vicuna");
+        .compile("tree-sitter-vicuna")
 }

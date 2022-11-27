@@ -38,3 +38,11 @@ struct LetDeclaration {
 
 This might require some rules on tree-sitter grammars such as `choice` must always be top level 
 (although anonymous structs is a reasonable solution)
+
+# Tree-Sitter WebAssembly
+
+Currently, tree-sitter compiles to WebAssembly via a custom build script. I'd like to change that, so it can be compiled 
+via the Rust build.rs script. That way it can be used with the rest of a Rust codebase that is compiled to WebAssembly.
+
+The current idea is to fix up the build.rs script. However, a longer term idea is to just compile tree-sitter grammars 
+to Rust instead of C.
