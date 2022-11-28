@@ -44,22 +44,25 @@ struct CompileRequest {
 }
 
 #[derive(Serialize)]
-struct CompileResponse {
-    code: String,
-    errors: String,
+pub struct CompileResponse {
+    pub output_code: Option<String>,
+    pub cst: String,
+    pub errors: Option<String>,
 }
 
 async fn compile(Json(payload): Json<CompileRequest>) -> Result<Json<CompileResponse>, StatusCode> {
-    let mut output = Vec::new();
-
-    let errors = if let Err(err) = compiler::compile(&payload.code, &mut output) {
-        err.to_string()
-    } else {
-        String::new()
-    };
-
-    Ok(Json(CompileResponse {
-        code: String::from_utf8(output).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        errors,
-    }))
+    let cst = compiler::get_cst(&payload.code)
+        .map_or_else(|| String::new(), |cst| cst.root_node().to_sexp());
+    match compiler::compile(&payload.code) {
+        Ok(compile_response) => Ok(Json(CompileResponse {
+            output_code: Some(compile_response),
+            cst,
+            errors: None,
+        })),
+        Err(err) => Ok(Json(CompileResponse {
+            output_code: None,
+            cst,
+            errors: Some(err.to_string()),
+        })),
+    }
 }

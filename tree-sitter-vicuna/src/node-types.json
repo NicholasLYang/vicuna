@@ -191,7 +191,7 @@
           "named": true
         },
         {
-          "type": "variable",
+          "type": "identifier",
           "named": true
         }
       ]
@@ -241,7 +241,22 @@
       "required": true,
       "types": [
         {
-          "type": "variable",
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "parameter_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "identifier",
           "named": true
         }
       ]
@@ -256,11 +271,11 @@
       "required": true,
       "types": [
         {
-          "type": "value",
+          "type": "identifier",
           "named": true
         },
         {
-          "type": "variable",
+          "type": "value",
           "named": true
         }
       ]
@@ -403,6 +418,14 @@
     "named": true
   },
   {
+    "type": "fn",
+    "named": false
+  },
+  {
+    "type": "identifier",
+    "named": true
+  },
+  {
     "type": "if",
     "named": false
   },
@@ -421,10 +444,6 @@
   {
     "type": "true",
     "named": false
-  },
-  {
-    "type": "variable",
-    "named": true
   },
   {
     "type": "{",

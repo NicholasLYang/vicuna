@@ -1,13 +1,22 @@
+use crate::server::CompileResponse;
 use crate::{BinaryOp, Expr, ExpressionBlock, JsBackend, Stmt, Value};
 use anyhow::{anyhow, Result};
-use std::io::Write;
 use tree_sitter::{Language, Parser, Tree, TreeCursor};
 
 extern "C" {
     fn tree_sitter_vicuna() -> Language;
 }
 
-pub fn compile(source: &str, output: impl Write) -> Result<()> {
+pub fn get_cst(source: &str) -> Option<Tree> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(unsafe { tree_sitter_vicuna() })
+        .unwrap();
+
+    parser.parse(&source, None)
+}
+
+pub fn compile(source: &str) -> Result<String> {
     let mut parser = Parser::new();
     parser
         .set_language(unsafe { tree_sitter_vicuna() })
@@ -16,15 +25,11 @@ pub fn compile(source: &str, output: impl Write) -> Result<()> {
         .parse(&source, None)
         .ok_or_else(|| anyhow!("Unable to parse code"))?;
     let mut ast_builder = ASTBuilder::new(&source, &tree)?;
-    let program = match ast_builder.build_ast() {
-        Ok(program) => program,
-        Err(err) => {
-            return Err(err);
-        }
-    };
-    let mut js_backend = JsBackend::new(output);
+    let program = ast_builder.build_ast()?;
+    let mut output = Vec::new();
+    let mut js_backend = JsBackend::new(&mut output);
     js_backend.emit_program(&program)?;
-    Ok(())
+    Ok(String::from_utf8(output)?)
 }
 
 /// Builds AST from tree-sitter CST
@@ -89,15 +94,15 @@ impl<'a> ASTBuilder<'a> {
     }
 
     fn build_ast(&mut self) -> Result<Vec<Stmt>> {
-        let mut has_next_expr = self.cursor.goto_first_child();
+        let mut has_next_stmt = self.cursor.goto_first_child();
         let mut stmts = Vec::new();
-        while has_next_expr {
+        while has_next_stmt {
             stmts.push(self.build_stmt()?);
             // Skip ";"
             self.cursor.goto_next_sibling();
             // Skip "\n"
             self.cursor.goto_next_sibling();
-            has_next_expr = self.cursor.goto_next_sibling();
+            has_next_stmt = self.cursor.goto_next_sibling();
         }
 
         Ok(stmts)
@@ -203,7 +208,7 @@ impl<'a> ASTBuilder<'a> {
                 let node = self.cursor.node();
                 let result = match node.kind() {
                     "value" => Ok(Expr::Value(self.build_value()?)),
-                    "variable" => Ok(Expr::Variable(node.utf8_text(self.source)?.to_string())),
+                    "identifier" => Ok(Expr::Variable(node.utf8_text(self.source)?.to_string())),
                     unknown_kind => Err(anyhow!(
                         "Kind `{}` is not handled yet in primary_expression.",
                         unknown_kind

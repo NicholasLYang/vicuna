@@ -46,3 +46,39 @@ via the Rust build.rs script. That way it can be used with the rest of a Rust co
 
 The current idea is to fix up the build.rs script. However, a longer term idea is to just compile tree-sitter grammars 
 to Rust instead of C.
+
+# Type System
+The basic types in Vicuna are `i32`, `f32`, `bool`, `string`.
+
+We have structs:
+```
+struct Foo {
+    a: i32,
+    b: i32
+}
+```
+
+and enums:
+
+```
+enum Bar {
+    A(i32),
+    B { 
+      baz: string
+    }
+}
+```
+
+There are traits:
+
+```
+trait Foo {
+    fn bar() -> i32;
+}
+
+impl Foo for i32 {
+    fn bar() -> i32 {
+        42
+    }
+}
+```

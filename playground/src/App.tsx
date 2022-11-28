@@ -7,10 +7,15 @@ function getCodeFromUrl() {
   return atob(urlParams.get("code") || "");
 }
 
+interface CompilerOutput {
+  outputCode?: string;
+  cst?: string;
+  errors?: string;
+}
+
 function App() {
   const [code, setCode] = useState(getCodeFromUrl());
-  const [output, setOutput] = useState("");
-  const [errors, setErrors] = useState("");
+  const [compilerOutput, setCompilerOutput] = useState<CompilerOutput>({});
 
   useEffect(() => {
     (async function () {
@@ -22,8 +27,11 @@ function App() {
         body: JSON.stringify({ code }),
       });
       const payload = await result.json();
-      setOutput(payload.code);
-      setErrors(payload.errors);
+      setCompilerOutput({
+        outputCode: payload.output_code,
+        errors: payload.errors,
+        cst: payload.cst,
+      });
     })();
   }, [code]);
   return (
@@ -49,19 +57,31 @@ function App() {
         <div>
           <h1 className="text-xl">Output</h1>
           <button
-            disabled={!output}
+            disabled={!compilerOutput.outputCode}
             onClick={() => {
-              eval(output);
+              if (compilerOutput.outputCode) {
+                eval(compilerOutput.outputCode);
+              }
             }}
             className="p-1 bg-orange-500 disabled:bg-gray-300 w-16 rounded text-white"
           >
             Run
           </button>
-          <pre className="w-full min-h-[100px]">{output || "No output"}</pre>
+          <pre className="w-full min-h-[100px]">
+            {compilerOutput.outputCode || "No output"}
+          </pre>
         </div>
         <div>
           <h1 className="text-xl">Errors</h1>
-          <pre className="w-full text-red-500">{errors}</pre>
+          <pre className="w-full text-red-500 min-h-[50px]">
+            {compilerOutput.errors}
+          </pre>
+        </div>
+        <div>
+          <h1 className="text-xl">CST</h1>
+          <pre className="w-full min-h-[50px] whitespace-normal">
+            {compilerOutput.cst}
+          </pre>
         </div>
       </div>
     </div>

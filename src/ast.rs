@@ -1,4 +1,11 @@
 #[derive(Debug)]
+pub struct Function {
+    pub name: String,
+    pub params: Vec<String>,
+    pub body: ExpressionBlock,
+}
+
+#[derive(Debug)]
 pub enum Stmt {
     Let(String, Expr),
     /// Let assigned to an if expression.

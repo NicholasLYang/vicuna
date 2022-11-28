@@ -4,6 +4,10 @@ module.exports = grammar({
   rules: {
     // TODO: add the actual grammar rules
     source_file: ($) => seq(repeat(seq($.statement))),
+    function: ($) =>
+      seq("fn", $.identifier, $.parameter_list, $.expression_block),
+    parameter_list: ($) =>
+      seq("(", repeat(seq($.identifier, ",")), optional($.identifier), ")"),
     statement: ($) =>
       choice(
         $.expression_statement,
@@ -24,11 +28,11 @@ module.exports = grammar({
         )
       ),
     let_declaration: ($) =>
-      seq(token("let"), $.variable, token("="), $.expression, token(";")),
+      seq(token("let"), $.identifier, token("="), $.expression, token(";")),
     let_if_declaration: ($) =>
       seq(
         token("let"),
-        $.variable,
+        $.identifier,
         token("="),
         token("if"),
         field("condition", $.expression),
@@ -72,8 +76,8 @@ module.exports = grammar({
         optional(field("argument", $.expression)),
         token(")")
       ),
-    primary_expression: ($) => prec(8, choice($.variable, $.value)),
-    variable: ($) => /[A-Za-z_][A-Za-z0-9_]*/,
+    primary_expression: ($) => prec(8, choice($.identifier, $.value)),
+    identifier: ($) => /[A-Za-z_][A-Za-z0-9_]*/,
     value: ($) => choice($.float, $.integer, $.string, $.boolean),
     boolean: ($) => choice("true", "false"),
     float: ($) => /[0-9]+\.[0-9]+/,
