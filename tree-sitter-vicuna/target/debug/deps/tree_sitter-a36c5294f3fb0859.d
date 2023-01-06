@@ -1,9 +1,0 @@
-/Users/nicholas/projects/vicuna/tree-sitter-vicuna/target/debug/deps/tree_sitter-a36c5294f3fb0859.rmeta: /Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/lib.rs /Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/ffi.rs /Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/util.rs /Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/./bindings.rs /Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/../include/tree_sitter/parser.h
-
-/Users/nicholas/projects/vicuna/tree-sitter-vicuna/target/debug/deps/tree_sitter-a36c5294f3fb0859.d: /Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/lib.rs /Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/ffi.rs /Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/util.rs /Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/./bindings.rs /Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/../include/tree_sitter/parser.h
-
-/Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/lib.rs:
-/Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/ffi.rs:
-/Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/util.rs:
-/Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/./bindings.rs:
-/Users/nicholas/.cargo/registry/src/github.com-1ecc6299db9ec823/tree-sitter-0.20.9/binding_rust/../include/tree_sitter/parser.h:
