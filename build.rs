@@ -6,8 +6,11 @@ fn main() {
     dir.push("tree-sitter-vicuna");
     dir.push("src");
 
+    let mut sysroot = current_dir().unwrap();
+    sysroot.push("wasm-sysroot");
     cc::Build::new()
         .include(&dir)
+        .include(&sysroot)
         .file(dir.join("parser.c"))
         .compile("tree-sitter-vicuna")
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { API_URL } from "./constants";
+import Module from "../../target/wasm32-unknown-emscripten/debug/vicuna";
 
 function getCodeFromUrl() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -7,33 +7,15 @@ function getCodeFromUrl() {
   return atob(urlParams.get("code") || "");
 }
 
-interface CompilerOutput {
-  outputCode?: string;
-  cst?: string;
-  errors?: string;
-}
-
 function App() {
   const [code, setCode] = useState(getCodeFromUrl());
-  const [compilerOutput, setCompilerOutput] = useState<CompilerOutput>({});
-
   useEffect(() => {
     (async function () {
-      const result = await fetch(`${API_URL}/compile`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ code }),
-      });
-      const payload = await result.json();
-      setCompilerOutput({
-        outputCode: payload.output_code,
-        errors: payload.errors,
-        cst: payload.cst,
-      });
+      const m = await Module({ locateFile: (file) => file });
+      m.ccall("test");
     })();
-  }, [code]);
+  }, []);
+
   return (
     <div className="flex">
       <div className="p-2 w-1/2">
@@ -56,32 +38,7 @@ function App() {
       <div className="flex flex-col p-2 w-1/2">
         <div>
           <h1 className="text-xl">Output</h1>
-          <button
-            disabled={!compilerOutput.outputCode}
-            onClick={() => {
-              if (compilerOutput.outputCode) {
-                eval(compilerOutput.outputCode);
-              }
-            }}
-            className="p-1 bg-orange-500 disabled:bg-gray-300 w-16 rounded text-white"
-          >
-            Run
-          </button>
-          <pre className="w-full min-h-[100px]">
-            {compilerOutput.outputCode || "No output"}
-          </pre>
-        </div>
-        <div>
-          <h1 className="text-xl">Errors</h1>
-          <pre className="w-full text-red-500 min-h-[50px]">
-            {compilerOutput.errors}
-          </pre>
-        </div>
-        <div>
-          <h1 className="text-xl">CST</h1>
-          <pre className="w-full min-h-[50px] whitespace-normal">
-            {compilerOutput.cst}
-          </pre>
+          <pre className="w-full min-h-[100px]">{"No output"}</pre>
         </div>
       </div>
     </div>

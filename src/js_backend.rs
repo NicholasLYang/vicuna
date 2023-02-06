@@ -1,5 +1,4 @@
-use crate::ast::UnaryOp;
-use crate::{BinaryOp, Expr, Stmt, Value};
+use crate::ast::{BinaryOp, Expr, Stmt, UnaryOp, Value};
 use anyhow::Result;
 use std::io::Write;
 

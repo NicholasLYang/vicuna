@@ -15,16 +15,16 @@
 //! [Parser]: https://docs.rs/tree-sitter/*/tree_sitter/struct.Parser.html
 //! [tree-sitter]: https://tree-sitter.github.io/
 
-use tree_sitter::Language;
+use std::os::raw::c_int;
 
 extern "C" {
-    fn tree_sitter_vicuna() -> Language;
+    fn tree_sitter_vicuna() -> c_int;
 }
 
 /// Get the tree-sitter [Language][] for this grammar.
 ///
 /// [Language]: https://docs.rs/tree-sitter/*/tree_sitter/struct.Language.html
-pub fn language() -> Language {
+pub fn language() -> c_int {
     unsafe { tree_sitter_vicuna() }
 }
 

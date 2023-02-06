@@ -1,20 +1,20 @@
-use crate::server::CompileResponse;
-use crate::{BinaryOp, Expr, ExpressionBlock, JsBackend, Stmt, Value};
+use crate::ast::{BinaryOp, Expr, ExpressionBlock, Stmt, Value};
+use crate::js_backend::JsBackend;
 use anyhow::{anyhow, Result};
-use tree_sitter::{Language, Parser, Tree, TreeCursor};
+use tree_sitter_c2rust::{Language, Parser, Tree, TreeCursor};
 
 extern "C" {
     fn tree_sitter_vicuna() -> Language;
 }
 
-pub fn get_cst(source: &str) -> Option<Tree> {
-    let mut parser = Parser::new();
-    parser
-        .set_language(unsafe { tree_sitter_vicuna() })
-        .unwrap();
-
-    parser.parse(&source, None)
-}
+// pub fn get_cst(source: &str) -> Option<Tree> {
+//     let mut parser = Parser::new();
+//     parser
+//         .set_language(unsafe { tree_sitter_vicuna() })
+//         .unwrap();
+//
+//     parser.parse(&source, None)
+// }
 
 pub fn compile(source: &str) -> Result<String> {
     let mut parser = Parser::new();
