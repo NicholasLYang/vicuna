@@ -9,12 +9,14 @@ export async function loadWasm() {
   });
   const moduleBytes = await readFile("../target/wasm32-wasi/debug/vicuna.wasm");
   const module = await WebAssembly.compile(moduleBytes);
-  // Instantiate the WASI module
   let instance = await wasi.instantiate(module, {});
+  const code = "let a = 10 - 2;"
   const [codePtr, codeLength] = sendString(code, instance);
 
   let ptr = instance.exports.compile_code(codePtr, codeLength);
-  console.log(receiveString(ptr, instance));
+  const [output, outputLength] = receiveString(ptr, instance);
+  console.log(output);
+  instance.exports.deallocate_buffer(ptr, outputLength);
   console.log(wasi.getStdoutString());
 }
 
@@ -39,6 +41,6 @@ function receiveString(ptr, instance) {
   for (let i = 0; i < length; i++) {
     outputBuffer[i] = memoryBuffer[ptr + i + 4];
   }
-
-  return (new TextDecoder().decode(outputBuffer.buffer))
+  const string = (new TextDecoder().decode(outputBuffer.buffer))
+  return [string, length]
 }
