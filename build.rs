@@ -6,11 +6,19 @@ fn main() {
     dir.push("tree-sitter-vicuna");
     dir.push("src");
 
-    let mut sysroot = current_dir().unwrap();
-    sysroot.push("wasm-stdlib-hack/include/libc");
-    cc::Build::new()
-        .include(&dir)
-        .include(&sysroot)
+    let mut c_config = cc::Build::new();
+    c_config.include(&dir);
+
+    if matches!(
+        build_target::target_arch().unwrap(),
+        build_target::Arch::WASM32
+    ) {
+        let mut sysroot = current_dir().unwrap();
+        sysroot.push("wasm-stdlib-hack/include/libc");
+        c_config.include(&sysroot);
+    }
+
+    c_config
         .file(dir.join("parser.c"))
         .compile("tree-sitter-vicuna")
 }
