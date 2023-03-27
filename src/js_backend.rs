@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Stmt, UnaryOp, Value};
+use crate::ast::{BinaryOp, Expr, Function, Stmt, UnaryOp, Value};
 use anyhow::Result;
 use std::io::Write;
 
@@ -58,6 +58,27 @@ impl<T: Write> JsBackend<T> {
             Stmt::Expr(expr) => {
                 self.emit_expr(expr)?;
                 self.output.write_all(b";\n")?;
+            }
+            Stmt::Function(Function {
+                name, params, body, ..
+            }) => {
+                write!(self.output, "function {}(", name)?;
+                for (arg, _) in params {
+                    self.output.write_all(arg.as_bytes())?;
+                    self.output.write_all(b", ")?;
+                }
+                writeln!(self.output, ") {{")?;
+                for stmt in &body.stmts {
+                    self.emit_stmt(stmt)?;
+                }
+
+                if let Some(end_expr) = &body.end_expr {
+                    self.output.write_all(b"return ")?;
+                    self.emit_expr(end_expr)?;
+                    self.output.write_all(b";\n")?;
+                }
+
+                writeln!(self.output, "}}")?;
             }
         }
         Ok(())

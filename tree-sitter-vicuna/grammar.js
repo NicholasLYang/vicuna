@@ -2,18 +2,18 @@ module.exports = grammar({
   name: "vicuna",
 
   rules: {
-    // TODO: add the actual grammar rules
-    source_file: ($) => seq(repeat(seq($.statement))),
+    source_file: ($) => seq(repeat(choice($.statement))),
     function: ($) =>
       seq("fn", $.identifier, $.parameter_list, $.expression_block),
     parameter_list: ($) =>
-      seq("(", repeat(seq($.identifier, ",")), optional($.identifier), ")"),
+      seq("(", repeat(seq($.identifier, ":", $.type_sig, ",")), optional(seq($.identifier, ":", $.type_sig)), ")"),
     statement: ($) =>
       choice(
-        $.expression_statement,
         $.if_statement,
         $.let_declaration,
-        $.let_if_declaration
+        $.let_if_declaration,
+        $.expression_statement,
+        $.function
       ),
     if_statement: ($) =>
       seq(
@@ -42,7 +42,7 @@ module.exports = grammar({
     expression_block: ($) =>
       seq(
         token("{"),
-        repeat(seq($.statement, token(";"))),
+        repeat($.statement),
         optional($.expression),
         token("}")
       ),
@@ -77,6 +77,7 @@ module.exports = grammar({
         token(")")
       ),
     primary_expression: ($) => prec(8, choice($.identifier, $.value)),
+    type_sig: ($) => choice("i32", "f32", "string", "bool"),
     identifier: ($) => /[A-Za-z_][A-Za-z0-9_]*/,
     value: ($) => choice($.float, $.integer, $.string, $.boolean),
     boolean: ($) => choice("true", "false"),

@@ -1,16 +1,22 @@
-use anyhow::{Result, anyhow};
-use tree_sitter_c2rust::{Tree, TreeCursor};
+use anyhow::{anyhow, Result};
+use tree_sitter_c2rust::{Language, Parser, Tree, TreeCursor};
 
-#[derive(Debug)]
+extern "C" {
+    fn tree_sitter_vicuna() -> Language;
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
-    pub params: Vec<String>,
+    pub params: Vec<(String, TypeSig)>,
+    pub return_type: Option<TypeSig>,
     pub body: ExpressionBlock,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Let(String, Expr),
+    Function(Function),
     /// Let assigned to an if expression.
     /// ```
     ///  let a = if foo {
@@ -28,13 +34,13 @@ pub enum Stmt {
     Expr(Expr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExpressionBlock {
     pub stmts: Vec<Stmt>,
     pub end_expr: Option<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Value(Value),
     Variable(String),
@@ -49,15 +55,15 @@ pub enum Expr {
     Unary(UnaryOp, Box<Expr>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypeSig {
-    I64,
-    F64,
+    I32,
+    F32,
     String,
     Bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     I32(i32),
     F32(f32),
@@ -65,7 +71,7 @@ pub enum Value {
     String(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOp {
     Add,
     Subtract,
@@ -73,7 +79,7 @@ pub enum BinaryOp {
     Multiply,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
     Negate,
     Not,
@@ -124,18 +130,29 @@ impl<'a> ASTBuilder<'a> {
         }
     }
 
-    // If cursor does point to expected sibling kind, move cursor to its next sibling
+    // If cursor does point to expected kind, move cursor to its next sibling
     // If no more siblings, we error. If we do not point to expected kind, we error.
-    fn expect_and_consume_sibling(&mut self, expected_sibling_kind: &str) -> Result<()> {
-        self.expect_kind(expected_sibling_kind)?;
+    fn expect_and_consume_kind(&mut self, expected_kind: &str) -> Result<()> {
+        self.expect_kind(expected_kind)?;
+        let has_sibling = self.cursor.goto_next_sibling();
+
+        if has_sibling {
+            Ok(())
+        } else {
+            Err(anyhow!("Expected `{}` to have sibling", expected_kind))
+        }
+    }
+
+    // If next sibling exists, move cursor to it. If no more siblings, we error.
+    fn expect_and_consume_sibling(&mut self) -> Result<()> {
         let has_sibling = self.cursor.goto_next_sibling();
 
         if has_sibling {
             Ok(())
         } else {
             Err(anyhow!(
-                "Expected `{}` to have sibling node",
-                expected_sibling_kind
+                "Expected `{}` to have sibling node, instead reached end of input",
+                self.cursor.node().kind()
             ))
         }
     }
@@ -145,14 +162,45 @@ impl<'a> ASTBuilder<'a> {
         let mut stmts = Vec::new();
         while has_next_stmt {
             stmts.push(self.build_stmt()?);
-            // Skip ";"
-            self.cursor.goto_next_sibling();
-            // Skip "\n"
-            self.cursor.goto_next_sibling();
             has_next_stmt = self.cursor.goto_next_sibling();
         }
 
         Ok(stmts)
+    }
+
+    fn build_parameter_list(&mut self) -> Result<Vec<(String, TypeSig)>> {
+        self.expect_and_consume_parent("parameter_list")?;
+        self.expect_and_consume_kind("(")?;
+        let mut params = Vec::new();
+        let mut has_next_param = self.cursor.goto_next_sibling();
+        while has_next_param {
+            let param_name = self.cursor.node().utf8_text(self.source)?.to_string();
+            self.expect_and_consume_kind(":")?;
+            let param_type = match self.cursor.node().utf8_text(self.source)? {
+                "i32" => TypeSig::I32,
+                "f32" => TypeSig::F32,
+                "bool" => TypeSig::Bool,
+                "string" => TypeSig::String,
+                sig => return Err(anyhow!("Unknown type signature `{}`", sig)),
+            };
+
+            params.push((param_name, param_type));
+
+            self.cursor.goto_next_sibling();
+            match self.cursor.node().kind() {
+                ")" => break,
+                "," => {
+                    self.cursor.goto_next_sibling();
+                }
+                _ => return Err(anyhow!("Expected `,` or `)`")),
+            }
+
+            has_next_param = self.cursor.goto_next_sibling();
+        }
+
+        self.cursor.goto_parent();
+
+        Ok(params)
     }
 
     fn build_stmt(&mut self) -> Result<Stmt> {
@@ -162,7 +210,7 @@ impl<'a> ASTBuilder<'a> {
             "let_declaration" => {
                 self.cursor.goto_first_child();
                 // First child is "let"
-                self.expect_and_consume_sibling("let")?;
+                self.expect_and_consume_kind("let")?;
                 // Next is variable name
                 let var_name = self.cursor.node().utf8_text(self.source)?;
                 // Next is "="
@@ -175,16 +223,16 @@ impl<'a> ASTBuilder<'a> {
             }
             "let_if_declaration" => {
                 self.cursor.goto_first_child();
-                self.expect_and_consume_sibling("let")?;
+                self.expect_and_consume_kind("let")?;
                 let name = self.cursor.node().utf8_text(self.source)?;
                 self.cursor.goto_next_sibling();
-                self.expect_and_consume_sibling("=")?;
-                self.expect_and_consume_sibling("if")?;
+                self.expect_and_consume_kind("=")?;
+                self.expect_and_consume_kind("if")?;
                 let condition = self.build_expr()?;
                 self.cursor.goto_next_sibling();
                 let then_block = self.build_expression_block()?;
                 self.cursor.goto_next_sibling();
-                self.expect_and_consume_sibling("else")?;
+                self.expect_and_consume_kind("else")?;
                 let else_block = self.build_expression_block()?;
 
                 Ok(Stmt::LetIf {
@@ -200,6 +248,25 @@ impl<'a> ASTBuilder<'a> {
                 self.cursor.goto_parent();
                 Ok(Stmt::Expr(expr))
             }
+            "function" => {
+                self.cursor.goto_first_child();
+                self.expect_and_consume_kind("fn")?;
+                let name = self.cursor.node().utf8_text(self.source)?;
+                self.cursor.goto_next_sibling();
+
+                let params = self.build_parameter_list()?;
+                self.cursor.goto_next_sibling();
+
+                let body = self.build_expression_block()?;
+                self.cursor.goto_parent();
+
+                Ok(Stmt::Function(Function {
+                    name: name.to_string(),
+                    params,
+                    return_type: None,
+                    body,
+                }))
+            }
             unknown_kind => Err(anyhow!(
                 "Kind `{}` is not yet handled in statement",
                 unknown_kind
@@ -207,18 +274,19 @@ impl<'a> ASTBuilder<'a> {
         };
 
         self.cursor.goto_parent();
+        self.cursor.goto_parent();
         result
     }
 
     fn build_expression_block(&mut self) -> Result<ExpressionBlock> {
         self.expect_and_consume_parent("expression_block")?;
-        self.expect_and_consume_sibling("{")?;
+        self.expect_and_consume_kind("{")?;
         let mut stmts = Vec::new();
         let block = loop {
             match self.cursor.node().kind() {
                 "statement" => {
                     stmts.push(self.build_stmt()?);
-                    self.expect_and_consume_sibling(";")?;
+                    self.expect_and_consume_sibling()?;
                 }
                 "expression" => {
                     let end_expr = self.build_expr()?;
@@ -401,5 +469,83 @@ impl<'a> ASTBuilder<'a> {
                 unknown_kind
             )),
         }
+    }
+}
+
+pub fn parse(source: &str) -> Result<Vec<Stmt>> {
+    let mut parser = Parser::new();
+    parser.set_language(unsafe { tree_sitter_vicuna() })?;
+
+    let tree = parser
+        .parse(&source, None)
+        .ok_or_else(|| anyhow!("Unable to parse code"))?;
+    let mut ast_builder = ASTBuilder::new(&source, &tree)?;
+
+    ast_builder.build_ast()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_function() -> Result<()> {
+        let source = r#"
+        fn main() {
+            let a = 1;
+            let b = 2;
+        }
+        ""#;
+        let ast = parse(source)?;
+        assert_eq!(ast.len(), 1);
+        assert_eq!(
+            ast[0],
+            Stmt::Function(Function {
+                name: "main".to_string(),
+                params: vec![],
+                return_type: None,
+                body: ExpressionBlock {
+                    stmts: vec![
+                        Stmt::Let("a".to_string(), Expr::Value(Value::I32(1))),
+                        Stmt::Let("b".to_string(), Expr::Value(Value::I32(2)))
+                    ],
+                    end_expr: None,
+                },
+            })
+        );
+
+        let source = r#"fn main() {}""#;
+        let ast = parse(source)?;
+        assert_eq!(ast.len(), 1);
+        assert_eq!(
+            ast[0],
+            Stmt::Function(Function {
+                name: "main".to_string(),
+                params: vec![],
+                return_type: None,
+                body: ExpressionBlock {
+                    stmts: vec![],
+                    end_expr: None,
+                },
+            })
+        );
+
+        let source = r#"fn main() { 10 }""#;
+        let ast = parse(source)?;
+        assert_eq!(ast.len(), 1);
+        assert_eq!(
+            ast[0],
+            Stmt::Function(Function {
+                name: "main".to_string(),
+                params: vec![],
+                return_type: None,
+                body: ExpressionBlock {
+                    stmts: vec![],
+                    end_expr: Some(Expr::Value(Value::I32(10))),
+                },
+            })
+        );
+
+        Ok(())
     }
 }

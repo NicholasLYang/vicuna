@@ -123,6 +123,29 @@
     }
   },
   {
+    "type": "function",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "expression_block",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "parameter_list",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "if_statement",
     "named": true,
     "fields": {
@@ -258,6 +281,10 @@
         {
           "type": "identifier",
           "named": true
+        },
+        {
+          "type": "type_sig",
+          "named": true
         }
       ]
     }
@@ -309,6 +336,10 @@
           "named": true
         },
         {
+          "type": "function",
+          "named": true
+        },
+        {
           "type": "if_statement",
           "named": true
         },
@@ -322,6 +353,11 @@
         }
       ]
     }
+  },
+  {
+    "type": "type_sig",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "unary_expression",
@@ -398,6 +434,10 @@
     "named": false
   },
   {
+    "type": ":",
+    "named": false
+  },
+  {
     "type": ";",
     "named": false
   },
@@ -406,7 +446,15 @@
     "named": false
   },
   {
+    "type": "bool",
+    "named": false
+  },
+  {
     "type": "else",
+    "named": false
+  },
+  {
+    "type": "f32",
     "named": false
   },
   {
@@ -419,6 +467,10 @@
   },
   {
     "type": "fn",
+    "named": false
+  },
+  {
+    "type": "i32",
     "named": false
   },
   {
@@ -435,6 +487,10 @@
   },
   {
     "type": "let",
+    "named": false
+  },
+  {
+    "type": "string",
     "named": false
   },
   {
