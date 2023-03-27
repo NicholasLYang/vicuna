@@ -7,7 +7,7 @@ fn main() {
     dir.push("src");
 
     let mut sysroot = current_dir().unwrap();
-    sysroot.push("wasm-sysroot");
+    sysroot.push("wasm-stdlib-hack/include/libc");
     cc::Build::new()
         .include(&dir)
         .include(&sysroot)

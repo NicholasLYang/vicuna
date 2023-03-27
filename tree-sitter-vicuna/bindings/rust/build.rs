@@ -1,7 +1,14 @@
+use std::fs;
+use std::path::PathBuf;
+
 fn main() {
     let src_dir = std::path::Path::new("src");
+    // let wasm_stdlib: PathBuf = ["..", "wasm-stdlib-hack", "include", "libc"]
+    //     .iter()
+    //     .collect();
+    //
+    // let wasm_stdlib = fs::canonicalize(wasm_stdlib).unwrap();
 
-    println!("cargo:rustc-env=EMCC_CFLAGS=-s EXPORT_ES6=1 -s MODULARIZE=1");
     let mut c_config = cc::Build::new();
     c_config.include(&src_dir);
     c_config
