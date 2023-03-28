@@ -2,11 +2,21 @@ module.exports = grammar({
   name: "vicuna",
 
   rules: {
-    source_file: ($) => seq(repeat(choice($.statement))),
+    source_file: ($) => seq(repeat(choice($.statement, $.type_declaration))),
+    type_declaration: ($) => choice($.struct_declaration),
+    struct_declaration: ($) => seq("struct", $.identifier, $.struct_body),
+    struct_body: ($) =>
+      seq("{", repeat(seq($.struct_field, ",")), optional($.struct_field), "}"),
+    struct_field: ($) => seq($.identifier, ":", $.type_sig),
     function: ($) =>
       seq("fn", $.identifier, $.parameter_list, $.expression_block),
     parameter_list: ($) =>
-      seq("(", repeat(seq($.identifier, ":", $.type_sig, ",")), optional(seq($.identifier, ":", $.type_sig)), ")"),
+      seq(
+        "(",
+        repeat(seq($.identifier, ":", $.type_sig, ",")),
+        optional(seq($.identifier, ":", $.type_sig)),
+        ")"
+      ),
     statement: ($) =>
       choice(
         $.if_statement,
@@ -40,12 +50,7 @@ module.exports = grammar({
         optional(field("else_block", seq(token("else"), $.expression_block)))
       ),
     expression_block: ($) =>
-      seq(
-        token("{"),
-        repeat($.statement),
-        optional($.expression),
-        token("}")
-      ),
+      seq(token("{"), repeat($.statement), optional($.expression), token("}")),
     expression_statement: ($) => seq($.expression, token(";")),
     expression: ($) => $._arithmetic_expression,
     _arithmetic_expression: ($) =>

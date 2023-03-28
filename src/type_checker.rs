@@ -3,7 +3,6 @@
 //! The type checker is designed to be executed in parallel to the compilation
 //! process, similar to TypeScript (any code that parses should compile, but may not be semantically valid)
 //!
-//! TODO: Hoist functions first
 //!
 //! The current checker does not do
 //!  - Pattern matching
