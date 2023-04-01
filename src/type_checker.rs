@@ -10,7 +10,7 @@
 //!  - Type unification
 //!  - Borrow checking
 //!
-use crate::ast::{BinaryOp, Expr, Function, Stmt, TypeSig, UnaryOp, Value};
+use crate::ast::{BinaryOp, Expr, Function, Program, Stmt, TypeSig, UnaryOp, Value};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -109,8 +109,8 @@ impl TypeChecker {
         }
     }
 
-    pub fn check(mut self, program: &[Stmt]) -> Vec<TypeError> {
-        self.check_block(program);
+    pub fn check(mut self, program: &Program) -> Vec<TypeError> {
+        self.check_block(&program.statements);
 
         self.errors
     }
@@ -340,52 +340,58 @@ mod tests {
     #[test]
     fn test_variable_scopes() {
         let checker = TypeChecker::new();
-        let program = vec![
-            Stmt::Let("x".into(), Expr::Value(Value::I32(1))),
-            Stmt::Let("y".into(), Expr::Value(Value::I32(2))),
-            Stmt::LetIf {
-                name: "z".into(),
-                condition: Expr::Value(Value::Bool(true)),
-                then_block: ExpressionBlock {
-                    stmts: vec![],
-                    end_expr: Some(Expr::Variable("x".into())),
+        let program = Program {
+            type_declarations: vec![],
+            statements: vec![
+                Stmt::Let("x".into(), Expr::Value(Value::I32(1))),
+                Stmt::Let("y".into(), Expr::Value(Value::I32(2))),
+                Stmt::LetIf {
+                    name: "z".into(),
+                    condition: Expr::Value(Value::Bool(true)),
+                    then_block: ExpressionBlock {
+                        stmts: vec![],
+                        end_expr: Some(Expr::Variable("x".into())),
+                    },
+                    else_block: ExpressionBlock {
+                        stmts: vec![],
+                        end_expr: Some(Expr::Variable("y".into())),
+                    },
                 },
-                else_block: ExpressionBlock {
-                    stmts: vec![],
-                    end_expr: Some(Expr::Variable("y".into())),
-                },
-            },
-            Stmt::Expr(Expr::Binary(
-                BinaryOp::Add,
-                Box::new(Expr::Variable("z".into())),
-                Box::new(Expr::Variable("y".into())),
-            )),
-        ];
+                Stmt::Expr(Expr::Binary(
+                    BinaryOp::Add,
+                    Box::new(Expr::Variable("z".into())),
+                    Box::new(Expr::Variable("y".into())),
+                )),
+            ],
+        };
 
         assert_eq!(checker.check(&program), vec![]);
 
         let checker = TypeChecker::new();
-        let program = vec![
-            Stmt::Let("x".into(), Expr::Value(Value::I32(1))),
-            Stmt::Let("y".into(), Expr::Value(Value::I32(2))),
-            Stmt::LetIf {
-                name: "z".into(),
-                condition: Expr::Value(Value::Bool(true)),
-                then_block: ExpressionBlock {
-                    stmts: vec![],
-                    end_expr: Some(Expr::Variable("a".into())),
+        let program = Program {
+            type_declarations: vec![],
+            statements: vec![
+                Stmt::Let("x".into(), Expr::Value(Value::I32(1))),
+                Stmt::Let("y".into(), Expr::Value(Value::I32(2))),
+                Stmt::LetIf {
+                    name: "z".into(),
+                    condition: Expr::Value(Value::Bool(true)),
+                    then_block: ExpressionBlock {
+                        stmts: vec![],
+                        end_expr: Some(Expr::Variable("a".into())),
+                    },
+                    else_block: ExpressionBlock {
+                        stmts: vec![],
+                        end_expr: Some(Expr::Variable("b".into())),
+                    },
                 },
-                else_block: ExpressionBlock {
-                    stmts: vec![],
-                    end_expr: Some(Expr::Variable("b".into())),
-                },
-            },
-            Stmt::Expr(Expr::Binary(
-                BinaryOp::Add,
-                Box::new(Expr::Variable("c".into())),
-                Box::new(Expr::Variable("y".into())),
-            )),
-        ];
+                Stmt::Expr(Expr::Binary(
+                    BinaryOp::Add,
+                    Box::new(Expr::Variable("c".into())),
+                    Box::new(Expr::Variable("y".into())),
+                )),
+            ],
+        };
 
         assert_eq!(
             checker.check(&program),
@@ -400,35 +406,41 @@ mod tests {
     #[test]
     fn test_function_hoisting() {
         let checker = TypeChecker::new();
-        let program = vec![
-            Stmt::Function(Function {
-                name: "f".into(),
-                params: vec![],
-                return_type: Some(TypeSig::I32),
-                body: ExpressionBlock {
-                    stmts: vec![],
-                    end_expr: Some(Expr::Value(Value::I32(1))),
-                },
-            }),
-            Stmt::Let(
+        let program = Program {
+            type_declarations: vec![],
+            statements: vec![
+                Stmt::Function(Function {
+                    name: "f".into(),
+                    params: vec![],
+                    return_type: Some(TypeSig::I32),
+                    body: ExpressionBlock {
+                        stmts: vec![],
+                        end_expr: Some(Expr::Value(Value::I32(1))),
+                    },
+                }),
+                Stmt::Let(
+                    "x".into(),
+                    Expr::Call {
+                        callee: Box::new(Expr::Variable("f".into())),
+                        calls: vec![],
+                    },
+                ),
+            ],
+        };
+
+        assert_eq!(checker.check(&program), vec![]);
+
+        let checker = TypeChecker::new();
+        let program = Program {
+            type_declarations: vec![],
+            statements: vec![Stmt::Let(
                 "x".into(),
                 Expr::Call {
                     callee: Box::new(Expr::Variable("f".into())),
                     calls: vec![],
                 },
-            ),
-        ];
-
-        assert_eq!(checker.check(&program), vec![]);
-
-        let checker = TypeChecker::new();
-        let program = vec![Stmt::Let(
-            "x".into(),
-            Expr::Call {
-                callee: Box::new(Expr::Variable("f".into())),
-                calls: vec![],
-            },
-        )];
+            )],
+        };
 
         assert_eq!(
             checker.check(&program),

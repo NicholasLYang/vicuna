@@ -1,8 +1,19 @@
 use anyhow::{anyhow, Result};
+use std::collections::HashMap;
 use tree_sitter_c2rust::{Language, Parser, Tree, TreeCursor};
 
 extern "C" {
     fn tree_sitter_vicuna() -> Language;
+}
+
+pub struct Program {
+    pub type_declarations: Vec<TypeDeclaration>,
+    pub statements: Vec<Stmt>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeDeclaration {
+    Struct(String, HashMap<String, TypeSig>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -157,15 +168,47 @@ impl<'a> ASTBuilder<'a> {
         }
     }
 
-    pub fn build_ast(&mut self) -> Result<Vec<Stmt>> {
+    pub fn build_ast(&mut self) -> Result<Program> {
         let mut has_next_stmt = self.cursor.goto_first_child();
-        let mut stmts = Vec::new();
+        let mut type_declarations = Vec::new();
+        let mut statements = Vec::new();
         while has_next_stmt {
-            stmts.push(self.build_stmt()?);
+            match self.cursor.node().kind() {
+                "statement" => {
+                    statements.push(self.build_stmt()?);
+                }
+                "type_declaration" => {
+                    type_declarations.push(self.build_type_declaration()?);
+                }
+                kind => {
+                    return Err(anyhow!(
+                        "Expected `statement` or `type_declaration`, received `{}`: {}",
+                        kind,
+                        self.cursor.node().utf8_text(self.source)?
+                    ))
+                }
+            }
             has_next_stmt = self.cursor.goto_next_sibling();
         }
 
-        Ok(stmts)
+        Ok(Program {
+            type_declarations,
+            statements,
+        })
+    }
+
+    fn build_name_type_pair(&mut self) -> Result<(String, TypeSig)> {
+        let param_name = self.cursor.node().utf8_text(self.source)?.to_string();
+        self.expect_and_consume_kind(":")?;
+        let param_type = match self.cursor.node().utf8_text(self.source)? {
+            "i32" => TypeSig::I32,
+            "f32" => TypeSig::F32,
+            "bool" => TypeSig::Bool,
+            "string" => TypeSig::String,
+            sig => return Err(anyhow!("Unknown type signature `{}`", sig)),
+        };
+
+        Ok((param_name, param_type))
     }
 
     fn build_parameter_list(&mut self) -> Result<Vec<(String, TypeSig)>> {
@@ -174,16 +217,7 @@ impl<'a> ASTBuilder<'a> {
         let mut params = Vec::new();
         let mut has_next_param = self.cursor.goto_next_sibling();
         while has_next_param {
-            let param_name = self.cursor.node().utf8_text(self.source)?.to_string();
-            self.expect_and_consume_kind(":")?;
-            let param_type = match self.cursor.node().utf8_text(self.source)? {
-                "i32" => TypeSig::I32,
-                "f32" => TypeSig::F32,
-                "bool" => TypeSig::Bool,
-                "string" => TypeSig::String,
-                sig => return Err(anyhow!("Unknown type signature `{}`", sig)),
-            };
-
+            let (param_name, param_type) = self.build_name_type_pair()?;
             params.push((param_name, param_type));
 
             self.cursor.goto_next_sibling();
@@ -201,6 +235,32 @@ impl<'a> ASTBuilder<'a> {
         self.cursor.goto_parent();
 
         Ok(params)
+    }
+
+    fn build_type_declaration(&mut self) -> Result<TypeDeclaration> {
+        self.expect_and_consume_parent("type_declaration")?;
+        self.expect_and_consume_kind("struct")?;
+        let type_name = self.cursor.node().utf8_text(self.source)?.to_string();
+        self.expect_and_consume_kind("{")?;
+        let mut fields = HashMap::new();
+        let mut has_next_param = self.cursor.goto_next_sibling();
+        while has_next_param {
+            let (param_name, param_type) = self.build_name_type_pair()?;
+            fields.insert(param_name, param_type);
+
+            self.cursor.goto_next_sibling();
+            match self.cursor.node().kind() {
+                "}" => break,
+                "," => {
+                    self.cursor.goto_next_sibling();
+                }
+                _ => return Err(anyhow!("Expected `,` or `}}`")),
+            }
+
+            has_next_param = self.cursor.goto_next_sibling();
+        }
+
+        Ok(TypeDeclaration::Struct(type_name, fields))
     }
 
     fn build_stmt(&mut self) -> Result<Stmt> {
@@ -472,7 +532,7 @@ impl<'a> ASTBuilder<'a> {
     }
 }
 
-pub fn parse(source: &str) -> Result<Vec<Stmt>> {
+pub fn parse(source: &str) -> Result<Program> {
     let mut parser = Parser::new();
     parser.set_language(unsafe { tree_sitter_vicuna() })?;
 
@@ -497,9 +557,9 @@ mod tests {
         }
         ""#;
         let ast = parse(source)?;
-        assert_eq!(ast.len(), 1);
+        assert_eq!(ast.statements.len(), 1);
         assert_eq!(
-            ast[0],
+            ast.statements[0],
             Stmt::Function(Function {
                 name: "main".to_string(),
                 params: vec![],
@@ -516,9 +576,9 @@ mod tests {
 
         let source = r#"fn main() {}""#;
         let ast = parse(source)?;
-        assert_eq!(ast.len(), 1);
+        assert_eq!(ast.statements.len(), 1);
         assert_eq!(
-            ast[0],
+            ast.statements[0],
             Stmt::Function(Function {
                 name: "main".to_string(),
                 params: vec![],
@@ -532,9 +592,9 @@ mod tests {
 
         let source = r#"fn main() { 10 }""#;
         let ast = parse(source)?;
-        assert_eq!(ast.len(), 1);
+        assert_eq!(ast.statements.len(), 1);
         assert_eq!(
-            ast[0],
+            ast.statements[0],
             Stmt::Function(Function {
                 name: "main".to_string(),
                 params: vec![],

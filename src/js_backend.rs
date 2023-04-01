@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Function, Stmt, UnaryOp, Value};
+use crate::ast::{BinaryOp, Expr, Function, Program, Stmt, UnaryOp, Value};
 use anyhow::Result;
 use std::io::Write;
 
@@ -11,8 +11,8 @@ impl<T: Write> JsBackend<T> {
         Self { output }
     }
 
-    pub fn emit_program(&mut self, program: &[Stmt]) -> Result<()> {
-        for stmt in program {
+    pub fn emit_program(&mut self, program: &Program) -> Result<()> {
+        for stmt in &program.statements {
             self.emit_stmt(stmt)?;
         }
 
