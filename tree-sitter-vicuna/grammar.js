@@ -6,10 +6,22 @@ module.exports = grammar({
     type_declaration: ($) => choice($.struct_declaration),
     struct_declaration: ($) => seq("struct", $.identifier, $.struct_body),
     struct_body: ($) =>
-      seq("{", repeat(seq($.struct_field, ",")), optional($.struct_field), "}"),
-    struct_field: ($) => seq($.identifier, ":", $.type_sig),
+      seq(
+        "{",
+        repeat(seq($._struct_field, ",")),
+        optional($._struct_field),
+        "}"
+      ),
+    _struct_field: ($) => seq($.identifier, ":", $.type_sig),
     function: ($) =>
-      seq("fn", $.identifier, $.parameter_list, $.expression_block),
+      seq(
+        "fn",
+        $.identifier,
+        $.parameter_list,
+        optional($.return_type),
+        $.expression_block
+      ),
+    return_type: ($) => seq("->", $.type_sig),
     parameter_list: ($) =>
       seq(
         "(",

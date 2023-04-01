@@ -141,6 +141,10 @@
         {
           "type": "parameter_list",
           "named": true
+        },
+        {
+          "type": "return_type",
+          "named": true
         }
       ]
     }
@@ -309,6 +313,21 @@
     }
   },
   {
+    "type": "return_type",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "type_sig",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "source_file",
     "named": true,
     "fields": {},
@@ -367,7 +386,11 @@
       "required": false,
       "types": [
         {
-          "type": "struct_field",
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "type_sig",
           "named": true
         }
       ]
@@ -387,25 +410,6 @@
         },
         {
           "type": "struct_body",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "struct_field",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "identifier",
-          "named": true
-        },
-        {
-          "type": "type_sig",
           "named": true
         }
       ]
@@ -499,6 +503,10 @@
   },
   {
     "type": "-",
+    "named": false
+  },
+  {
+    "type": "->",
     "named": false
   },
   {

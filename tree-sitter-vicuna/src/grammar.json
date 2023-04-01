@@ -62,7 +62,7 @@
             "members": [
               {
                 "type": "SYMBOL",
-                "name": "struct_field"
+                "name": "_struct_field"
               },
               {
                 "type": "STRING",
@@ -76,7 +76,7 @@
           "members": [
             {
               "type": "SYMBOL",
-              "name": "struct_field"
+              "name": "_struct_field"
             },
             {
               "type": "BLANK"
@@ -89,7 +89,7 @@
         }
       ]
     },
-    "struct_field": {
+    "_struct_field": {
       "type": "SEQ",
       "members": [
         {
@@ -122,8 +122,33 @@
           "name": "parameter_list"
         },
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "return_type"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "SYMBOL",
           "name": "expression_block"
+        }
+      ]
+    },
+    "return_type": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "->"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "type_sig"
         }
       ]
     },

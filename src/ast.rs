@@ -13,7 +13,10 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeDeclaration {
-    Struct(String, HashMap<String, TypeSig>),
+    Struct {
+        name: String,
+        fields: HashMap<String, TypeSig>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -197,17 +200,22 @@ impl<'a> ASTBuilder<'a> {
         })
     }
 
-    fn build_name_type_pair(&mut self) -> Result<(String, TypeSig)> {
-        let param_name = self.cursor.node().utf8_text(self.source)?.to_string();
-        self.expect_and_consume_sibling()?;
-        self.expect_and_consume_kind(":")?;
-        let param_type = match self.cursor.node().utf8_text(self.source)? {
+    fn build_type_signature(&mut self) -> Result<TypeSig> {
+        let type_sig = match self.cursor.node().utf8_text(self.source)? {
             "i32" => TypeSig::I32,
             "f32" => TypeSig::F32,
             "bool" => TypeSig::Bool,
             "string" => TypeSig::String,
             sig => return Err(anyhow!("Unknown type signature `{}`", sig)),
         };
+
+        Ok(type_sig)
+    }
+
+    fn build_name_type_pair(&mut self) -> Result<(String, TypeSig)> {
+        let param_name = self.get_source_and_consume()?;
+        self.expect_and_consume_kind(":")?;
+        let param_type = self.build_type_signature()?;
         self.expect_and_consume_sibling()?;
 
         Ok((param_name, param_type))
@@ -234,18 +242,24 @@ impl<'a> ASTBuilder<'a> {
         Ok(params)
     }
 
+    fn get_source_and_consume(&mut self) -> Result<String> {
+        let source = self.cursor.node().utf8_text(self.source)?.to_string();
+        self.expect_and_consume_sibling()?;
+
+        Ok(source)
+    }
+
     fn build_type_declaration(&mut self) -> Result<TypeDeclaration> {
         self.expect_and_consume_parent("type_declaration")?;
+        self.expect_and_consume_parent("struct_declaration")?;
         self.expect_and_consume_kind("struct")?;
-        let type_name = self.cursor.node().utf8_text(self.source)?.to_string();
+        let struct_name = self.get_source_and_consume()?;
+        self.expect_and_consume_parent("struct_body")?;
         self.expect_and_consume_kind("{")?;
         let mut fields = HashMap::new();
-        let mut has_next_param = self.cursor.goto_next_sibling();
-        while has_next_param {
+        while self.cursor.node().kind() != "}" {
             let (param_name, param_type) = self.build_name_type_pair()?;
             fields.insert(param_name, param_type);
-
-            self.cursor.goto_next_sibling();
             match self.cursor.node().kind() {
                 "}" => break,
                 "," => {
@@ -253,11 +267,12 @@ impl<'a> ASTBuilder<'a> {
                 }
                 _ => return Err(anyhow!("Expected `,` or `}}`")),
             }
-
-            has_next_param = self.cursor.goto_next_sibling();
         }
 
-        Ok(TypeDeclaration::Struct(type_name, fields))
+        Ok(TypeDeclaration::Struct {
+            name: struct_name,
+            fields: fields,
+        })
     }
 
     fn build_stmt(&mut self) -> Result<Stmt> {
@@ -308,11 +323,20 @@ impl<'a> ASTBuilder<'a> {
             "function" => {
                 self.cursor.goto_first_child();
                 self.expect_and_consume_kind("fn")?;
-                let name = self.cursor.node().utf8_text(self.source)?;
-                self.cursor.goto_next_sibling();
+                let name = self.get_source_and_consume()?;
 
                 let params = self.build_parameter_list()?;
                 self.cursor.goto_next_sibling();
+                let return_type = if self.cursor.node().kind() == "return_type" {
+                    self.cursor.goto_first_child();
+                    self.expect_and_consume_kind("->")?;
+                    let return_type = self.build_type_signature()?;
+                    self.cursor.goto_parent();
+                    self.expect_and_consume_sibling()?;
+                    Some(return_type)
+                } else {
+                    None
+                };
 
                 let body = self.build_expression_block()?;
                 self.cursor.goto_parent();
@@ -320,7 +344,7 @@ impl<'a> ASTBuilder<'a> {
                 Ok(Stmt::Function(Function {
                     name: name.to_string(),
                     params,
-                    return_type: None,
+                    return_type,
                     body,
                 }))
             }
@@ -625,6 +649,52 @@ mod tests {
                 },
             })
         );
+
+        let source = r#"fn main(a: i32, b:i32) -> i32 { a + b}""#;
+        let ast = parse(source)?;
+        assert_eq!(ast.statements.len(), 1);
+        assert_eq!(
+            ast.statements[0],
+            Stmt::Function(Function {
+                name: "main".to_string(),
+                params: vec![
+                    ("a".to_string(), TypeSig::I32),
+                    ("b".to_string(), TypeSig::I32)
+                ],
+                return_type: Some(TypeSig::I32),
+                body: ExpressionBlock {
+                    stmts: vec![],
+                    end_expr: Some(Expr::Binary(
+                        BinaryOp::Add,
+                        Box::new(Expr::Variable("a".to_string())),
+                        Box::new(Expr::Variable("b".to_string()))
+                    ))
+                },
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_struct_definition() -> Result<()> {
+        let source = r#"struct Foo {
+          a: i32,
+          b: f32
+        }""#;
+        let ast = parse(source)?;
+        assert_eq!(ast.type_declarations.len(), 1);
+        let mut fields = HashMap::new();
+        fields.insert("a".to_string(), TypeSig::I32);
+        fields.insert("b".to_string(), TypeSig::F32);
+
+        assert_eq!(
+            ast.type_declarations[0],
+            TypeDeclaration::Struct {
+                name: "Foo".to_string(),
+                fields
+            }
+        );
+
         Ok(())
     }
 }
