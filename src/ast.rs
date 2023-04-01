@@ -199,6 +199,7 @@ impl<'a> ASTBuilder<'a> {
 
     fn build_name_type_pair(&mut self) -> Result<(String, TypeSig)> {
         let param_name = self.cursor.node().utf8_text(self.source)?.to_string();
+        self.expect_and_consume_sibling()?;
         self.expect_and_consume_kind(":")?;
         let param_type = match self.cursor.node().utf8_text(self.source)? {
             "i32" => TypeSig::I32,
@@ -207,6 +208,7 @@ impl<'a> ASTBuilder<'a> {
             "string" => TypeSig::String,
             sig => return Err(anyhow!("Unknown type signature `{}`", sig)),
         };
+        self.expect_and_consume_sibling()?;
 
         Ok((param_name, param_type))
     }
@@ -215,21 +217,16 @@ impl<'a> ASTBuilder<'a> {
         self.expect_and_consume_parent("parameter_list")?;
         self.expect_and_consume_kind("(")?;
         let mut params = Vec::new();
-        let mut has_next_param = self.cursor.goto_next_sibling();
-        while has_next_param {
+        while self.cursor.node().kind() != ")" {
             let (param_name, param_type) = self.build_name_type_pair()?;
             params.push((param_name, param_type));
-
-            self.cursor.goto_next_sibling();
             match self.cursor.node().kind() {
-                ")" => break,
                 "," => {
-                    self.cursor.goto_next_sibling();
+                    self.expect_and_consume_sibling()?;
                 }
-                _ => return Err(anyhow!("Expected `,` or `)`")),
+                ")" => {}
+                kind => return Err(anyhow!("Expected `,` or `)`, instead received `{}`", kind)),
             }
-
-            has_next_param = self.cursor.goto_next_sibling();
         }
 
         self.cursor.goto_parent();
@@ -606,6 +603,28 @@ mod tests {
             })
         );
 
+        let source = r#"fn main(a: i32, b:i32) { a + b}""#;
+        let ast = parse(source)?;
+        assert_eq!(ast.statements.len(), 1);
+        assert_eq!(
+            ast.statements[0],
+            Stmt::Function(Function {
+                name: "main".to_string(),
+                params: vec![
+                    ("a".to_string(), TypeSig::I32),
+                    ("b".to_string(), TypeSig::I32)
+                ],
+                return_type: None,
+                body: ExpressionBlock {
+                    stmts: vec![],
+                    end_expr: Some(Expr::Binary(
+                        BinaryOp::Add,
+                        Box::new(Expr::Variable("a".to_string())),
+                        Box::new(Expr::Variable("b".to_string()))
+                    ))
+                },
+            })
+        );
         Ok(())
     }
 }
