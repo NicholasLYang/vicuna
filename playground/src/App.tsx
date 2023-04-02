@@ -37,12 +37,16 @@ function App() {
         <div className="flex flex-col p-2 w-1/2">
           <div>
             <h1 className="text-xl">Output</h1>
-            <pre className="w-full min-h-[100px]">
+            <pre className="w-full p-5 min-h-[100px]">
               {output.js || "No JS output"}
             </pre>
-            <pre className="w-full min-h-[100px]">{output.cst || "No CST"}</pre>
-            <pre className="w-full min-h-[100px]">{output.ast || "No AST"}</pre>
-            <pre className="w-full min-h-[100px]">
+            <pre className="w-full p-5 min-h-[100px]">
+              {output.cst || "No CST"}
+            </pre>
+            <pre className="w-full p-5 min-h-[100px]">
+              {output.ast || "No AST"}
+            </pre>
+            <pre className="w-full p-5 min-h-[100px]">
               {output.errors || "No errors"}
             </pre>
           </div>

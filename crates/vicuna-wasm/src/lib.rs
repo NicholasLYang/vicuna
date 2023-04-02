@@ -32,6 +32,12 @@ impl WasmOutput {
     }
 }
 
+#[wasm_bindgen(start)]
+fn init() {
+    console_error_panic_hook::set_once();
+    tracing_wasm::set_as_global_default();
+}
+
 #[wasm_bindgen]
 pub fn run_compiler(source: &str) -> WasmOutput {
     match compile(source) {
