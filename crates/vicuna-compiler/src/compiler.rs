@@ -3,6 +3,8 @@ use crate::js_backend::JsBackend;
 use crate::type_checker::{TypeChecker, TypeError};
 use anyhow::Result;
 use serde::Serialize;
+use tracing::debug;
+use tracing_subscriber;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CompilerOutput {
@@ -11,7 +13,10 @@ pub struct CompilerOutput {
 }
 
 pub fn compile(source: &str) -> Result<CompilerOutput> {
+    tracing_subscriber::fmt::init();
+
     let program = parse(source)?;
+    debug!("PROGRAM: {:#?}", program);
 
     let type_checker = TypeChecker::new();
     let type_errors = type_checker.check(&program);

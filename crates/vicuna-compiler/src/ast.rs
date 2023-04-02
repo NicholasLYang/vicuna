@@ -1,11 +1,13 @@
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
+use tracing::debug;
 use tree_sitter_c2rust::{Language, Parser, Tree, TreeCursor};
 
 extern "C" {
     fn tree_sitter_vicuna() -> Language;
 }
 
+#[derive(Debug)]
 pub struct Program {
     pub type_declarations: Vec<TypeDeclaration>,
     pub statements: Vec<Stmt>,
@@ -31,14 +33,14 @@ pub struct Function {
 pub enum Stmt {
     Let(String, Expr),
     Function(Function),
-    /// Let assigned to an if expression.
-    /// ```
-    ///  let a = if foo {
-    ///    1
-    ///  } else {
-    ///    2
-    ///  }
-    /// ```
+    // Let assigned to an if expression.
+    // ```
+    //  let a = if foo {
+    //    1
+    //  } else {
+    //    2
+    //  }
+    // ```
     LetIf {
         name: String,
         condition: Expr,
@@ -207,11 +209,7 @@ impl<'a> ASTBuilder<'a> {
             "f32" => TypeSig::F32,
             "bool" => TypeSig::Bool,
             "string" => TypeSig::String,
-            "identifier" => {
-                let type_name = self.get_source_and_consume()?;
-                TypeSig::Named(type_name)
-            }
-            sig => return Err(anyhow!("Unknown type signature `{}`", sig)),
+            sig => TypeSig::Named(sig.to_string()),
         };
 
         Ok(type_sig)
@@ -273,10 +271,13 @@ impl<'a> ASTBuilder<'a> {
                 _ => return Err(anyhow!("Expected `,` or `}}`")),
             }
         }
+        self.cursor.goto_parent();
+        self.cursor.goto_parent();
+        self.cursor.goto_parent();
 
         Ok(TypeDeclaration::Struct {
             name: struct_name,
-            fields: fields,
+            fields,
         })
     }
 
@@ -565,6 +566,9 @@ pub fn parse(source: &str) -> Result<Program> {
     let tree = parser
         .parse(&source, None)
         .ok_or_else(|| anyhow!("Unable to parse code"))?;
+
+    debug!("CST: {:#?}", tree.root_node().to_sexp());
+
     let mut ast_builder = ASTBuilder::new(&source, &tree)?;
 
     ast_builder.build_ast()
@@ -655,7 +659,7 @@ mod tests {
             })
         );
 
-        let source = r#"fn main(a: i32, b:i32) -> i32 { a + b}""#;
+        let source = r#"fn main(a: i32, b: Hash) -> i32 { a + b}""#;
         let ast = parse(source)?;
         assert_eq!(ast.statements.len(), 1);
         assert_eq!(
@@ -664,7 +668,7 @@ mod tests {
                 name: "main".to_string(),
                 params: vec![
                     ("a".to_string(), TypeSig::I32),
-                    ("b".to_string(), TypeSig::I32)
+                    ("b".to_string(), TypeSig::Named("Hash".to_string()))
                 ],
                 return_type: Some(TypeSig::I32),
                 body: ExpressionBlock {
@@ -683,13 +687,13 @@ mod tests {
     #[test]
     fn test_parse_struct_definition() -> Result<()> {
         let source = r#"struct Foo {
-          a: i32,
+          a: Student,
           b: f32
         }""#;
         let ast = parse(source)?;
         assert_eq!(ast.type_declarations.len(), 1);
         let mut fields = HashMap::new();
-        fields.insert("a".to_string(), TypeSig::I32);
+        fields.insert("a".to_string(), TypeSig::Named("Student".to_string()));
         fields.insert("b".to_string(), TypeSig::F32);
 
         assert_eq!(

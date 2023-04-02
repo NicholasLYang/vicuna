@@ -1,5 +1,5 @@
 [package]
-name = "vicuna-bin"
+name = "vic"
 version = "0.1.0"
 edition = "2021"
 

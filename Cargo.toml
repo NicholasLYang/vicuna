@@ -1,7 +1,7 @@
 [workspace]
 
 members = [
-  "crates/vicuna-bin",
+  "crates/vic",
   "crates/vicuna-compiler",
   "crates/vicuna-wasm",
 ]

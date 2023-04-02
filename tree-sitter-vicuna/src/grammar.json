@@ -766,6 +766,10 @@
         {
           "type": "STRING",
           "value": "bool"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "identifier"
         }
       ]
     },
