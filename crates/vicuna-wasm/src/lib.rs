@@ -1,4 +1,4 @@
-use vicuna_compiler::{compile, CompilerOutput};
+use vicuna_compiler::{compile, parse, CompilerOutput};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -40,23 +40,33 @@ fn init() {
 
 #[wasm_bindgen]
 pub fn run_compiler(source: &str) -> WasmOutput {
+    let mut errors = vec![];
+    let cst = match parse(source) {
+        Ok(cst) => Some(format!("{:#?}", cst)),
+        Err(err) => {
+            errors.push(err.to_string());
+            None
+        }
+    };
+
     match compile(source) {
         Ok(CompilerOutput {
             js,
             type_errors,
             ast,
         }) => {
-            let errors = type_errors.into_iter().map(|e| e.to_string()).collect();
+            errors.extend(type_errors.into_iter().map(|e| e.to_string()));
+
             WasmOutput {
                 js: Some(js),
-                cst: None,
+                cst,
                 ast: Some(format!("{:#?}", ast)),
                 errors,
             }
         }
         Err(err) => WasmOutput {
             js: None,
-            cst: None,
+            cst,
             ast: None,
             errors: vec![err.to_string()],
         },

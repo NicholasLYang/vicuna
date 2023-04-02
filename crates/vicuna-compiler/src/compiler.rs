@@ -18,6 +18,7 @@ pub fn compile(source: &str) -> Result<CompilerOutput> {
     debug!("CST: {:?}", cst);
 
     let program = build_ast(source, cst)?;
+    debug!("AST: {:?}", program);
 
     let type_checker = TypeChecker::new();
     let type_errors = type_checker.check(&program);

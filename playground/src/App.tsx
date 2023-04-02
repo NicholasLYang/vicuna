@@ -16,11 +16,11 @@ function App() {
       <nav className="w-full bg-sky-600">
         <h1 className="p-5 text-lg text-white">Vicuna Playground</h1>
       </nav>
-      <div className="flex">
-        <div className="p-2 w-1/2">
+      <div className="flex bg-slate-200">
+        <div className="p-2 w-1/2 space-y-5">
           <h1 className="text-xl">Code</h1>
           <textarea
-            className="w-3/4 font-mono"
+            className="w-3/4 font-mono p-5 rounded"
             rows={10}
             value={code}
             onChange={(e) => {
@@ -35,20 +35,32 @@ function App() {
           />
         </div>
         <div className="flex flex-col p-2 w-1/2">
-          <div>
+          <div className="space-y-5">
             <h1 className="text-xl">Output</h1>
-            <pre className="w-full p-5 min-h-[100px]">
-              {output.js || "No JS output"}
-            </pre>
-            <pre className="w-full p-5 min-h-[100px]">
-              {output.cst || "No CST"}
-            </pre>
-            <pre className="w-full p-5 min-h-[100px]">
-              {output.ast || "No AST"}
-            </pre>
-            <pre className="w-full p-5 min-h-[100px]">
-              {output.errors || "No errors"}
-            </pre>
+            <div>
+              <h2>JS output</h2>
+              <pre className="w-full overflow-auto p-5 rounded bg-white h-[100px]">
+                {output.js || ""}
+              </pre>
+            </div>
+            <div>
+              <h2>CST</h2>
+              <pre className="w-full overflow-auto p-5 rounded bg-white h-[100px]">
+                {output.cst || ""}
+              </pre>
+            </div>
+            <div>
+              <h2>AST</h2>
+              <pre className="w-full overflow-auto p-5 rounded bg-white h-[100px]">
+                {output.ast || ""}
+              </pre>
+            </div>
+            <div>
+              <h2>Errors</h2>
+              <pre className="w-full overflow-auto p-5 rounded bg-white h-[100px]">
+                {output.errors || "No errors"}
+              </pre>
+            </div>
           </div>
         </div>
       </div>
