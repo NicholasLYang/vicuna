@@ -34,8 +34,6 @@ impl WasmOutput {
 
 #[wasm_bindgen]
 pub fn run_compiler(source: &str) -> WasmOutput {
-    tracing_subscriber::fmt::init();
-
     match compile(source) {
         Ok(CompilerOutput {
             js,

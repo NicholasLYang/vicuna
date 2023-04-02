@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::collections::HashMap;
-use tracing::debug;
 use tree_sitter_c2rust::{Tree, TreeCursor};
 
 #[derive(Debug, Clone, Serialize)]
@@ -560,7 +559,6 @@ pub fn build_ast(source: &str, cst: Tree) -> Result<Program> {
     let mut ast_builder = ASTBuilder::new(&source, &cst)?;
 
     let ast = ast_builder.build_ast()?;
-    debug!("AST: {:#?}", ast);
 
     Ok(ast)
 }

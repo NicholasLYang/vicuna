@@ -4,8 +4,6 @@ use crate::parser::parse;
 use crate::type_checker::{TypeChecker, TypeError};
 use anyhow::Result;
 use serde::Serialize;
-use tracing::debug;
-use tracing_subscriber;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CompilerOutput {
@@ -15,12 +13,8 @@ pub struct CompilerOutput {
 }
 
 pub fn compile(source: &str) -> Result<CompilerOutput> {
-    tracing_subscriber::fmt::init();
-
     let cst = parse(source)?;
-    debug!("CST: {:#?}", cst.root_node().to_sexp());
     let program = build_ast(source, cst)?;
-    debug!("PROGRAM: {:#?}", program);
 
     let type_checker = TypeChecker::new();
     let type_errors = type_checker.check(&program);

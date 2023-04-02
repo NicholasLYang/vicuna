@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use tracing::debug;
 use tree_sitter_c2rust::{Language, Parser, Tree};
 
 extern "C" {
@@ -13,8 +12,6 @@ pub fn parse(source: &str) -> Result<Tree> {
     let tree = parser
         .parse(&source, None)
         .ok_or_else(|| anyhow!("Unable to parse code"))?;
-
-    debug!("CST: {:#?}", tree.root_node().to_sexp());
 
     Ok(tree)
 }
