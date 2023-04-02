@@ -1,11 +1,60 @@
-use vicuna_compiler::compile;
+use vicuna_compiler::{compile, CompilerOutput};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
-pub fn compile_code(code: &str) -> String {
-    match compile(code) {
-        Ok(compiler_output) => serde_json::to_string(&compiler_output)
-            .unwrap_or_else(|_| "Failed to serialize output".to_string()),
-        Err(err) => err.to_string(),
+pub struct WasmOutput {
+    js: Option<String>,
+    cst: Option<String>,
+    ast: Option<String>,
+    errors: Vec<String>,
+}
+
+#[wasm_bindgen]
+impl WasmOutput {
+    #[wasm_bindgen(getter)]
+    pub fn js(&self) -> Option<String> {
+        self.js.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn cst(&self) -> Option<String> {
+        self.cst.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn ast(&self) -> Option<String> {
+        self.ast.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn errors(&self) -> String {
+        self.errors.join("\n")
+    }
+}
+
+#[wasm_bindgen]
+pub fn run_compiler(source: &str) -> WasmOutput {
+    tracing_subscriber::fmt::init();
+
+    match compile(source) {
+        Ok(CompilerOutput {
+            js,
+            type_errors,
+            ast,
+        }) => {
+            let errors = type_errors.into_iter().map(|e| e.to_string()).collect();
+            WasmOutput {
+                js: Some(js),
+                cst: None,
+                ast: Some(format!("{:#?}", ast)),
+                errors,
+            }
+        }
+        Err(err) => WasmOutput {
+            js: None,
+            cst: None,
+            ast: None,
+            errors: vec![err.to_string()],
+        },
     }
 }

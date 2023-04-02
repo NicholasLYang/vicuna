@@ -15,6 +15,7 @@ use crate::ast::{
 };
 use serde::Serialize;
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 
 // TODO: Intern strings
 type Name = String;
@@ -31,6 +32,32 @@ pub enum Type {
         return_type: Box<Type>,
     },
     Named(Name),
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::I32 => write!(f, "i32"),
+            Type::F32 => write!(f, "f32"),
+            Type::Bool => write!(f, "bool"),
+            Type::Void => write!(f, "void"),
+            Type::String => write!(f, "string"),
+            Type::Function {
+                param_types,
+                return_type,
+            } => {
+                write!(f, "(")?;
+                for (i, param_type) in param_types.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", param_type)?;
+                }
+                write!(f, ") -> {}", return_type)
+            }
+            Type::Named(name) => write!(f, "{}", name),
+        }
+    }
 }
 
 struct SymbolTable {
@@ -83,6 +110,22 @@ pub enum TypeError {
     UndefinedVariable(Name),
     ArityMismatch(usize, usize),
     NotCallable(Type),
+}
+
+// TODO: Make this some fancy error display
+impl Display for TypeError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeError::TypeMismatch(expected, actual) => {
+                write!(f, "Expected type {}, got {}", expected, actual)
+            }
+            TypeError::UndefinedVariable(name) => write!(f, "Undefined variable {}", name),
+            TypeError::ArityMismatch(expected, actual) => {
+                write!(f, "Expected {} arguments, got {}", expected, actual)
+            }
+            TypeError::NotCallable(ty) => write!(f, "Type {} is not callable", ty),
+        }
+    }
 }
 
 impl From<Option<&TypeSig>> for Type {

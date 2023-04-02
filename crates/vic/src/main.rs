@@ -8,12 +8,10 @@ fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("No argument provided"))?;
     let source = fs::read_to_string(arg)?;
     let output = compile(&source)?;
-
     for type_error in output.type_errors {
         eprintln!("{:?}", type_error);
     }
 
     println!("{}", output.js);
-
     Ok(())
 }

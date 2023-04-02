@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { compile_code } from "../../crates/vicuna-wasm/pkg";
+import { run_compiler } from "../../crates/vicuna-wasm/pkg";
 
 function getCodeFromUrl() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -10,6 +10,7 @@ function getCodeFromUrl() {
 function App() {
   const [code, setCode] = useState(getCodeFromUrl());
 
+  const output = run_compiler(code);
   return (
     <main>
       <nav className="w-full bg-sky-600">
@@ -36,7 +37,14 @@ function App() {
         <div className="flex flex-col p-2 w-1/2">
           <div>
             <h1 className="text-xl">Output</h1>
-            <pre className="w-full min-h-[100px]">{compile_code(code)}</pre>
+            <pre className="w-full min-h-[100px]">
+              {output.js || "No JS output"}
+            </pre>
+            <pre className="w-full min-h-[100px]">{output.cst || "No CST"}</pre>
+            <pre className="w-full min-h-[100px]">{output.ast || "No AST"}</pre>
+            <pre className="w-full min-h-[100px]">
+              {output.errors || "No errors"}
+            </pre>
           </div>
         </div>
       </div>

@@ -9,6 +9,7 @@ wasm-opt = false
 
 [dependencies]
 serde_json = "1.0.94"
+tracing-subscriber = "0.3.16"
 vicuna-compiler = { path = "../vicuna-compiler" }
 wasm-bindgen = "0.2.84"
 

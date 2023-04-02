@@ -387,6 +387,7 @@ name = "vic"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "tracing-subscriber",
  "vicuna-compiler",
 ]
 
@@ -408,6 +409,7 @@ name = "vicuna-wasm"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "tracing-subscriber",
  "vicuna-compiler",
  "wasm-bindgen",
 ]

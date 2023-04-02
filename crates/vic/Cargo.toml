@@ -7,4 +7,5 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
+tracing-subscriber = "0.3.16"
 vicuna-compiler = { path = "../vicuna-compiler" }

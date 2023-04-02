@@ -1,7 +1,7 @@
 mod ast;
 mod compiler;
 mod js_backend;
+mod parser;
 mod type_checker;
-mod wasm;
 
-pub use compiler::compile;
+pub use compiler::{compile, CompilerOutput};

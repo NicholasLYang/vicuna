@@ -1,19 +1,16 @@
 use anyhow::{anyhow, Result};
+use serde::Serialize;
 use std::collections::HashMap;
 use tracing::debug;
-use tree_sitter_c2rust::{Language, Parser, Tree, TreeCursor};
+use tree_sitter_c2rust::{Tree, TreeCursor};
 
-extern "C" {
-    fn tree_sitter_vicuna() -> Language;
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Program {
     pub type_declarations: Vec<TypeDeclaration>,
     pub statements: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum TypeDeclaration {
     Struct {
         name: String,
@@ -21,7 +18,7 @@ pub enum TypeDeclaration {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Function {
     pub name: String,
     pub params: Vec<(String, TypeSig)>,
@@ -29,7 +26,7 @@ pub struct Function {
     pub body: ExpressionBlock,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Stmt {
     Let(String, Expr),
     Function(Function),
@@ -50,13 +47,13 @@ pub enum Stmt {
     Expr(Expr),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ExpressionBlock {
     pub stmts: Vec<Stmt>,
     pub end_expr: Option<Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Expr {
     Value(Value),
     Variable(String),
@@ -71,7 +68,7 @@ pub enum Expr {
     Unary(UnaryOp, Box<Expr>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum TypeSig {
     I32,
     F32,
@@ -80,7 +77,7 @@ pub enum TypeSig {
     Named(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Value {
     I32(i32),
     F32(f32),
@@ -88,7 +85,7 @@ pub enum Value {
     String(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum BinaryOp {
     Add,
     Subtract,
@@ -96,7 +93,7 @@ pub enum BinaryOp {
     Multiply,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum UnaryOp {
     Negate,
     Not,
@@ -559,19 +556,13 @@ impl<'a> ASTBuilder<'a> {
     }
 }
 
-pub fn parse(source: &str) -> Result<Program> {
-    let mut parser = Parser::new();
-    parser.set_language(unsafe { tree_sitter_vicuna() })?;
+pub fn build_ast(source: &str, cst: Tree) -> Result<Program> {
+    let mut ast_builder = ASTBuilder::new(&source, &cst)?;
 
-    let tree = parser
-        .parse(&source, None)
-        .ok_or_else(|| anyhow!("Unable to parse code"))?;
+    let ast = ast_builder.build_ast()?;
+    debug!("AST: {:#?}", ast);
 
-    debug!("CST: {:#?}", tree.root_node().to_sexp());
-
-    let mut ast_builder = ASTBuilder::new(&source, &tree)?;
-
-    ast_builder.build_ast()
+    Ok(ast)
 }
 
 #[cfg(test)]
