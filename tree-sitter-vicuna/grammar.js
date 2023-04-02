@@ -94,7 +94,7 @@ module.exports = grammar({
         token(")")
       ),
     primary_expression: ($) => prec(8, choice($.identifier, $.value)),
-    type_sig: ($) => choice("i32", "f32", "string", "bool"),
+    type_sig: ($) => choice("i32", "f32", "string", "bool", $.identifier),
     identifier: ($) => /[A-Za-z_][A-Za-z0-9_]*/,
     value: ($) => choice($.float, $.integer, $.string, $.boolean),
     boolean: ($) => choice("true", "false"),

@@ -75,6 +75,7 @@ pub enum TypeSig {
     F32,
     String,
     Bool,
+    Named(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -206,6 +207,10 @@ impl<'a> ASTBuilder<'a> {
             "f32" => TypeSig::F32,
             "bool" => TypeSig::Bool,
             "string" => TypeSig::String,
+            "identifier" => {
+                let type_name = self.get_source_and_consume()?;
+                TypeSig::Named(type_name)
+            }
             sig => return Err(anyhow!("Unknown type signature `{}`", sig)),
         };
 

@@ -1,0 +1,8 @@
+struct Student {
+  name: string,
+  age: i32
+}
+
+fn get_name(student: Student) -> string {
+  "hello"
+}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { compile_code } from "../../pkg";
+import { compile_code } from "../../crates/vicuna-wasm/pkg";
 
 function getCodeFromUrl() {
   const urlParams = new URLSearchParams(window.location.search);

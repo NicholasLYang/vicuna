@@ -10,7 +10,9 @@
 //!  - Type unification
 //!  - Borrow checking
 //!
-use crate::ast::{BinaryOp, Expr, Function, Program, Stmt, TypeSig, UnaryOp, Value};
+use crate::ast::{
+    BinaryOp, Expr, Function, Program, Stmt, TypeDeclaration, TypeSig, UnaryOp, Value,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -28,6 +30,7 @@ pub enum Type {
         param_types: Vec<Type>,
         return_type: Box<Type>,
     },
+    Named(Name),
 }
 
 struct SymbolTable {
@@ -70,6 +73,7 @@ impl SymbolTable {
 
 pub struct TypeChecker {
     symbol_table: SymbolTable,
+    named_types: HashMap<String, HashMap<Name, Type>>,
     pub(crate) errors: Vec<TypeError>,
 }
 
@@ -97,6 +101,7 @@ impl From<&TypeSig> for Type {
             TypeSig::F32 => Type::F32,
             TypeSig::Bool => Type::Bool,
             TypeSig::String => Type::String,
+            TypeSig::Named(name) => Type::Named(name.clone()),
         }
     }
 }
@@ -105,14 +110,31 @@ impl TypeChecker {
     pub fn new() -> Self {
         Self {
             symbol_table: SymbolTable::new(),
+            named_types: HashMap::new(),
             errors: Vec::new(),
         }
     }
 
     pub fn check(mut self, program: &Program) -> Vec<TypeError> {
+        self.add_type_declarations(&program.type_declarations);
         self.check_block(&program.statements);
 
         self.errors
+    }
+
+    fn add_type_declarations(&mut self, type_declarations: &[TypeDeclaration]) {
+        for decl in type_declarations {
+            #[allow(irrefutable_let_patterns)]
+            if let TypeDeclaration::Struct { name, fields } = decl {
+                self.named_types.insert(
+                    name.clone(),
+                    fields
+                        .iter()
+                        .map(|(name, ty)| (name.clone(), ty.into()))
+                        .collect(),
+                );
+            }
+        }
     }
 
     fn check_block(&mut self, stmts: &[Stmt]) {
@@ -189,16 +211,13 @@ impl TypeChecker {
                 self.check_expr(expr)?;
             }
             Stmt::Function(Function {
-                name,
-                params: _,
-                body,
-                ..
+                name, params, body, ..
             }) => {
                 self.symbol_table.enter_scope();
 
-                // for (name, ty) in params {
-                //     self.symbol_table.insert(name.clone(), ty.clone());
-                // }
+                for (name, ty) in params {
+                    self.symbol_table.insert(name.clone(), ty.into());
+                }
 
                 self.check_block(&body.stmts);
 

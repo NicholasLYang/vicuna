@@ -6,8 +6,8 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CompilerOutput {
-    js: String,
-    type_errors: Vec<TypeError>,
+    pub js: String,
+    pub type_errors: Vec<TypeError>,
 }
 
 pub fn compile(source: &str) -> Result<CompilerOutput> {

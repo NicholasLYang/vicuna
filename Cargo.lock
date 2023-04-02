@@ -383,17 +383,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830b7e5d4d90034032940e4ace0d9a9a057e7a45cd94e6c007832e39edb82f6d"
 
 [[package]]
-name = "vicuna"
+name = "vicuna-bin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "vicuna-compiler",
+]
+
+[[package]]
+name = "vicuna-compiler"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "build-target",
  "cc",
  "serde",
- "serde_json",
  "tracing",
  "tracing-subscriber",
  "tree-sitter-c2rust",
+]
+
+[[package]]
+name = "vicuna-wasm"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "vicuna-compiler",
  "wasm-bindgen",
 ]
 

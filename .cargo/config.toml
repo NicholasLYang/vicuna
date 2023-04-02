@@ -1,0 +1,2 @@
+[target.wasm32-unknown-unknown]
+ar = "llvm-ar"

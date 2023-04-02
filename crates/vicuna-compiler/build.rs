@@ -1,8 +1,16 @@
 use std::env::current_dir;
+use std::path::PathBuf;
+
+fn get_repo_root() -> PathBuf {
+    let mut dir = current_dir().unwrap();
+    dir.push(".."); // crates
+    dir.push(".."); // repository root
+    dir
+}
 
 fn main() {
     println!("cargo:rerun-if-changed=tree-sitter-vicuna/grammar.js");
-    let mut dir = current_dir().unwrap();
+    let mut dir = get_repo_root();
     dir.push("tree-sitter-vicuna");
     dir.push("src");
 
@@ -13,7 +21,7 @@ fn main() {
         build_target::target_arch().unwrap(),
         build_target::Arch::WASM32
     ) {
-        let mut sysroot = current_dir().unwrap();
+        let mut sysroot = get_repo_root();
         sysroot.push("wasm-stdlib-hack/include/libc");
         c_config.include(&sysroot);
     }
