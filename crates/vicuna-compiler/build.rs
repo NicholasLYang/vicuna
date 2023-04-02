@@ -9,7 +9,7 @@ fn get_repo_root() -> PathBuf {
 }
 
 fn main() {
-    println!("cargo:rerun-if-changed=tree-sitter-vicuna/grammar.js");
+    println!("cargo:rerun-if-changed=../../tree-sitter-vicuna/grammar.js");
     let mut dir = get_repo_root();
     dir.push("tree-sitter-vicuna");
     dir.push("src");
