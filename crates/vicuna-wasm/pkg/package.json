@@ -1,0 +1,16 @@
+{
+  "name": "vicuna-wasm",
+  "version": "0.1.0",
+  "files": [
+    "vicuna_wasm_bg.wasm",
+    "vicuna_wasm.js",
+    "vicuna_wasm_bg.js",
+    "vicuna_wasm.d.ts"
+  ],
+  "module": "vicuna_wasm.js",
+  "types": "vicuna_wasm.d.ts",
+  "sideEffects": [
+    "./vicuna_wasm.js",
+    "./snippets/*"
+  ]
+}
