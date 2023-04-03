@@ -92,7 +92,7 @@ pub enum BinaryOp {
     Multiply,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Serialize)]
 pub enum UnaryOp {
     Negate,
     Not,
@@ -566,6 +566,11 @@ pub fn build_ast(source: &str, cst: Tree) -> Result<Program> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parse;
+
+    fn parse_to_ast(source: &str) -> Result<Program> {
+        build_ast(source, parse(source)?)
+    }
 
     #[test]
     fn test_parse_function() -> Result<()> {
@@ -575,7 +580,7 @@ mod tests {
             let b = 2;
         }
         ""#;
-        let ast = parse(source)?;
+        let ast = parse_to_ast(source)?;
         assert_eq!(ast.statements.len(), 1);
         assert_eq!(
             ast.statements[0],
@@ -594,7 +599,7 @@ mod tests {
         );
 
         let source = r#"fn main() {}""#;
-        let ast = parse(source)?;
+        let ast = parse_to_ast(source)?;
         assert_eq!(ast.statements.len(), 1);
         assert_eq!(
             ast.statements[0],
@@ -610,7 +615,7 @@ mod tests {
         );
 
         let source = r#"fn main() { 10 }""#;
-        let ast = parse(source)?;
+        let ast = parse_to_ast(source)?;
         assert_eq!(ast.statements.len(), 1);
         assert_eq!(
             ast.statements[0],
@@ -626,7 +631,7 @@ mod tests {
         );
 
         let source = r#"fn main(a: i32, b:i32) { a + b}""#;
-        let ast = parse(source)?;
+        let ast = parse_to_ast(source)?;
         assert_eq!(ast.statements.len(), 1);
         assert_eq!(
             ast.statements[0],
@@ -649,7 +654,7 @@ mod tests {
         );
 
         let source = r#"fn main(a: i32, b: Hash) -> i32 { a + b}""#;
-        let ast = parse(source)?;
+        let ast = parse_to_ast(source)?;
         assert_eq!(ast.statements.len(), 1);
         assert_eq!(
             ast.statements[0],
@@ -678,8 +683,8 @@ mod tests {
         let source = r#"struct Foo {
           a: Student,
           b: f32
-        }""#;
-        let ast = parse(source)?;
+        }"#;
+        let ast = parse_to_ast(source)?;
         assert_eq!(ast.type_declarations.len(), 1);
         let mut fields = HashMap::new();
         fields.insert("a".to_string(), TypeSig::Named("Student".to_string()));
