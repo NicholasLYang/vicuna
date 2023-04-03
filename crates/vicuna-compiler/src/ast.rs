@@ -22,7 +22,7 @@ pub struct Function {
     pub name: String,
     pub params: Vec<(String, TypeSig)>,
     pub return_type: Option<TypeSig>,
-    pub body: ExpressionBlock,
+    pub body: ExprBlock,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -40,14 +40,14 @@ pub enum Stmt {
     LetIf {
         name: String,
         condition: Expr,
-        then_block: ExpressionBlock,
-        else_block: ExpressionBlock,
+        then_block: ExprBlock,
+        else_block: ExprBlock,
     },
     Expr(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ExpressionBlock {
+pub struct ExprBlock {
     pub stmts: Vec<Stmt>,
     pub end_expr: Option<Expr>,
 }
@@ -361,7 +361,7 @@ impl<'a> ASTBuilder<'a> {
         result
     }
 
-    fn build_expression_block(&mut self) -> Result<ExpressionBlock> {
+    fn build_expression_block(&mut self) -> Result<ExprBlock> {
         self.expect_and_consume_parent("expression_block")?;
         self.expect_and_consume_kind("{")?;
         let mut stmts = Vec::new();
@@ -373,13 +373,13 @@ impl<'a> ASTBuilder<'a> {
                 }
                 "expression" => {
                     let end_expr = self.build_expr()?;
-                    break ExpressionBlock {
+                    break ExprBlock {
                         stmts,
                         end_expr: Some(end_expr),
                     };
                 }
                 "}" => {
-                    break ExpressionBlock {
+                    break ExprBlock {
                         stmts,
                         end_expr: None,
                     }
@@ -588,7 +588,7 @@ mod tests {
                 name: "main".to_string(),
                 params: vec![],
                 return_type: None,
-                body: ExpressionBlock {
+                body: ExprBlock {
                     stmts: vec![
                         Stmt::Let("a".to_string(), Expr::Value(Value::I32(1))),
                         Stmt::Let("b".to_string(), Expr::Value(Value::I32(2)))
@@ -607,7 +607,7 @@ mod tests {
                 name: "main".to_string(),
                 params: vec![],
                 return_type: None,
-                body: ExpressionBlock {
+                body: ExprBlock {
                     stmts: vec![],
                     end_expr: None,
                 },
@@ -623,7 +623,7 @@ mod tests {
                 name: "main".to_string(),
                 params: vec![],
                 return_type: None,
-                body: ExpressionBlock {
+                body: ExprBlock {
                     stmts: vec![],
                     end_expr: Some(Expr::Value(Value::I32(10))),
                 },
@@ -642,7 +642,7 @@ mod tests {
                     ("b".to_string(), TypeSig::I32)
                 ],
                 return_type: None,
-                body: ExpressionBlock {
+                body: ExprBlock {
                     stmts: vec![],
                     end_expr: Some(Expr::Binary(
                         BinaryOp::Add,
@@ -665,7 +665,7 @@ mod tests {
                     ("b".to_string(), TypeSig::Named("Hash".to_string()))
                 ],
                 return_type: Some(TypeSig::I32),
-                body: ExpressionBlock {
+                body: ExprBlock {
                     stmts: vec![],
                     end_expr: Some(Expr::Binary(
                         BinaryOp::Add,

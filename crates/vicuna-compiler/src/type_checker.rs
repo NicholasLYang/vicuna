@@ -373,7 +373,7 @@ impl TypeChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::ExpressionBlock;
+    use crate::ast::ExprBlock;
 
     #[test]
     fn test_check_expr() {
@@ -410,11 +410,11 @@ mod tests {
                 Stmt::LetIf {
                     name: "z".into(),
                     condition: Expr::Value(Value::Bool(true)),
-                    then_block: ExpressionBlock {
+                    then_block: ExprBlock {
                         stmts: vec![],
                         end_expr: Some(Expr::Variable("x".into())),
                     },
-                    else_block: ExpressionBlock {
+                    else_block: ExprBlock {
                         stmts: vec![],
                         end_expr: Some(Expr::Variable("y".into())),
                     },
@@ -438,11 +438,11 @@ mod tests {
                 Stmt::LetIf {
                     name: "z".into(),
                     condition: Expr::Value(Value::Bool(true)),
-                    then_block: ExpressionBlock {
+                    then_block: ExprBlock {
                         stmts: vec![],
                         end_expr: Some(Expr::Variable("a".into())),
                     },
-                    else_block: ExpressionBlock {
+                    else_block: ExprBlock {
                         stmts: vec![],
                         end_expr: Some(Expr::Variable("b".into())),
                     },
@@ -475,7 +475,7 @@ mod tests {
                     name: "f".into(),
                     params: vec![],
                     return_type: Some(TypeSig::I32),
-                    body: ExpressionBlock {
+                    body: ExprBlock {
                         stmts: vec![],
                         end_expr: Some(Expr::Value(Value::I32(1))),
                     },
