@@ -60,6 +60,7 @@ impl Display for Type {
     }
 }
 
+#[derive(Debug)]
 struct SymbolTable {
     scopes: Vec<HashMap<Name, Type>>,
     current_scope: usize,
@@ -184,7 +185,7 @@ impl TypeChecker {
         for stmt in stmts {
             if let Stmt::Function(Function {
                 name,
-                return_type,
+                return_type: return_type,
                 params,
                 ..
             }) = stmt
@@ -254,7 +255,10 @@ impl TypeChecker {
                 self.check_expr(expr)?;
             }
             Stmt::Function(Function {
-                name, params, body, ..
+                name: _,
+                params,
+                body,
+                return_type,
             }) => {
                 self.symbol_table.enter_scope();
 
@@ -264,16 +268,18 @@ impl TypeChecker {
 
                 self.check_block(&body.stmts);
 
-                let ty = if let Some(end_expr) = &body.end_expr {
+                let end_expr_ty = if let Some(end_expr) = &body.end_expr {
                     self.check_expr(end_expr)
                 } else {
                     Some(Type::Void)
                 };
-
                 self.symbol_table.exit_scope();
 
-                if let Some(ty) = ty {
-                    self.symbol_table.insert(name.clone(), ty);
+                let end_expr_ty = end_expr_ty?;
+                let return_ty = return_type.as_ref().into();
+                if end_expr_ty != return_ty {
+                    self.errors
+                        .push(TypeError::TypeMismatch(end_expr_ty, return_ty));
                 }
             }
         }
@@ -334,37 +340,33 @@ impl TypeChecker {
                     None
                 }
             }
-            Expr::Call { callee, calls } => {
-                let mut callee_ty = self.check_expr(callee)?;
-                for args in calls {
-                    if let Type::Function {
-                        param_types,
-                        return_type,
-                    } = callee_ty
-                    {
-                        if args.len() != param_types.len() {
-                            self.errors
-                                .push(TypeError::ArityMismatch(param_types.len(), args.len()));
-                        }
-
-                        for (arg, param_type) in args.iter().zip(param_types) {
-                            let arg_ty = self.check_expr(arg)?;
-                            if arg_ty != param_type {
-                                self.errors.push(TypeError::TypeMismatch(
-                                    param_type.clone(),
-                                    arg_ty.clone(),
-                                ));
-                            }
-                        }
-
-                        callee_ty = *return_type;
-                    } else {
-                        self.errors.push(TypeError::NotCallable(callee_ty));
-                        return None;
+            Expr::Call { callee, args } => {
+                println!("callee: {:?}", callee);
+                println!("symbol table: {:?}", self.symbol_table);
+                let callee_ty = self.check_expr(callee)?;
+                if let Type::Function {
+                    param_types,
+                    return_type,
+                } = callee_ty
+                {
+                    if args.len() != param_types.len() {
+                        self.errors
+                            .push(TypeError::ArityMismatch(param_types.len(), args.len()));
                     }
-                }
 
-                Some(callee_ty)
+                    for (arg, param_type) in args.iter().zip(param_types) {
+                        let arg_ty = self.check_expr(arg)?;
+                        if arg_ty != param_type {
+                            self.errors
+                                .push(TypeError::TypeMismatch(param_type.clone(), arg_ty.clone()));
+                        }
+                    }
+
+                    Some(*return_type)
+                } else {
+                    self.errors.push(TypeError::NotCallable(callee_ty));
+                    None
+                }
             }
         }
     }
@@ -484,7 +486,7 @@ mod tests {
                     "x".into(),
                     Expr::Call {
                         callee: Box::new(Expr::Variable("f".into())),
-                        calls: vec![],
+                        args: vec![],
                     },
                 ),
             ],
@@ -499,7 +501,7 @@ mod tests {
                 "x".into(),
                 Expr::Call {
                     callee: Box::new(Expr::Variable("f".into())),
-                    calls: vec![],
+                    args: vec![],
                 },
             )],
         };

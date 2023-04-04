@@ -56,13 +56,7 @@ pub struct ExprBlock {
 pub enum Expr {
     Value(Value),
     Variable(String),
-    // Right now we only handle function calls but eventually we will also handle indexing (foo[1])
-    // and field access (bar.bat). In which case we need to rename this and make the `Vec<Expr>`
-    // into a proper enum with variants for Call, Index, and Field
-    Call {
-        callee: Box<Expr>,
-        calls: Vec<Vec<Expr>>,
-    },
+    Call { callee: Box<Expr>, args: Vec<Expr> },
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
 }
@@ -346,7 +340,7 @@ impl<'a> ASTBuilder<'a> {
                 Ok(Stmt::Function(Function {
                     name: name.to_string(),
                     params,
-                    return_type,
+                    return_type: return_type,
                     body,
                 }))
             }
@@ -443,38 +437,39 @@ impl<'a> ASTBuilder<'a> {
                 Ok(Expr::Binary(op, Box::new(lhs), Box::new(rhs)))
             }
             "call_expression" => {
-                let mut callee = None;
-                let mut calls = Vec::new();
-                let mut has_next_child = self.cursor.goto_first_child();
-                while has_next_child {
-                    match self.cursor.field_name() {
-                        Some("callee") => {
-                            callee = Some(self.build_expr()?);
-                        }
-                        Some("call") => {
-                            calls.push(self.build_call_arguments()?);
-                        }
-                        Some(unknown_field) => {
-                            return Err(anyhow!(
-                                "Unhandled field `{}` in call_expression",
-                                unknown_field
-                            ))
-                        }
-                        None => {}
-                    }
-                    has_next_child = self.cursor.goto_next_sibling();
-                }
-                self.cursor.goto_parent();
-
-                let callee = callee.ok_or_else(|| anyhow!("Function call must have callee"))?;
-                if calls.is_empty() {
-                    Ok(callee)
-                } else {
-                    Ok(Expr::Call {
-                        callee: Box::new(callee),
-                        calls,
-                    })
-                }
+                // let mut callee = None;
+                // let mut calls = Vec::new();
+                // let mut has_next_child = self.cursor.goto_first_child();
+                // while has_next_child {
+                //     match self.cursor.field_name() {
+                //         Some("callee") => {
+                //             callee = Some(self.build_expr()?);
+                //         }
+                //         Some("call") => {
+                //             calls.push(self.build_call_arguments()?);
+                //         }
+                //         Some(unknown_field) => {
+                //             return Err(anyhow!(
+                //                 "Unhandled field `{}` in call_expression",
+                //                 unknown_field
+                //             ))
+                //         }
+                //         None => {}
+                //     }
+                //     has_next_child = self.cursor.goto_next_sibling();
+                // }
+                // self.cursor.goto_parent();
+                //
+                // let callee = callee.ok_or_else(|| anyhow!("Function call must have callee"))?;
+                // if calls.is_empty() {
+                //     Ok(callee)
+                // } else {
+                //     Ok(Expr::Call {
+                //         callee: Box::new(callee),
+                //         args: calls,
+                //     })
+                // }
+                todo!()
             }
             "unary_expression" => {
                 if !self.cursor.goto_first_child() {

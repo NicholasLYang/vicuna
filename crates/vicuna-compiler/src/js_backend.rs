@@ -97,19 +97,17 @@ impl<T: Write> JsBackend<T> {
                     self.output.write_all(name.as_bytes())?;
                 }
             }
-            Expr::Call { callee, calls } => {
+            Expr::Call { callee, args } => {
                 self.emit_expr(callee)?;
-                for call in calls {
-                    self.output.write_all(b"(")?;
-                    let arity = call.len();
-                    for (i, arg) in call.iter().enumerate() {
-                        self.emit_expr(arg)?;
-                        if i < arity - 1 {
-                            self.output.write_all(b", ")?;
-                        }
+                self.output.write_all(b"(")?;
+                let arity = args.len();
+                for (i, arg) in args.iter().enumerate() {
+                    self.emit_expr(arg)?;
+                    if i < arity - 1 {
+                        self.output.write_all(b", ")?;
                     }
-                    self.output.write_all(b")")?;
                 }
+                self.output.write_all(b")")?;
             }
             Expr::Binary(op, lhs, rhs) => {
                 let op_str = match op {

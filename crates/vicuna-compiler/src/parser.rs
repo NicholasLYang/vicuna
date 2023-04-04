@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, ExprBlock, Stmt, UnaryOp, Value};
+use crate::ast::{BinaryOp, Expr, ExprBlock, Function, Stmt, TypeSig, UnaryOp, Value};
 use anyhow::{anyhow, Result};
 use chumsky::prelude::*;
 use tree_sitter_c2rust::{Language, Tree};
@@ -18,7 +18,7 @@ pub fn parse(source: &str) -> Result<Tree> {
     Ok(tree)
 }
 
-fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
+pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
     let ident = text::ident().padded();
     recursive(|expr| {
         let int = text::int(10)
@@ -37,10 +37,22 @@ fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
 
         let atom = float
             .or(int)
-            .or(expr.delimited_by(just('('), just(')')))
+            .or(expr.clone().delimited_by(just('('), just(')')))
             .or(bool)
             .or(ident.map(Expr::Variable))
             .padded();
+
+        let call = atom
+            .clone()
+            .then(
+                expr.separated_by(just(','))
+                    .allow_trailing()
+                    .delimited_by(just('('), just(')')),
+            )
+            .map(|(callee, args)| Expr::Call {
+                callee: Box::new(callee),
+                args,
+            });
 
         let op = |c| just(c).padded();
 
@@ -48,7 +60,7 @@ fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .to(UnaryOp::Negate)
             .or(op('!').to(UnaryOp::Not))
             .repeated()
-            .then(atom)
+            .then(call.or(atom))
             .foldr(|op, rhs| Expr::Unary(op, Box::new(rhs)));
 
         let div: fn(_, _) -> _ = |lhs, rhs| Expr::Binary(BinaryOp::Divide, lhs, rhs);
@@ -71,24 +83,64 @@ fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
     })
 }
 
+fn type_signature() -> impl Parser<char, TypeSig, Error = Simple<char>> {
+    ident().map(|id| match id.as_str() {
+        "i32" => TypeSig::I32,
+        "f32" => TypeSig::F32,
+        "string" => TypeSig::String,
+        "bool" => TypeSig::Bool,
+        _ => TypeSig::Named(id),
+    })
+}
+
+fn ident() -> impl Parser<char, String, Error = Simple<char>> + Clone + Copy {
+    text::ident().padded()
+}
+
 fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
     recursive(|stmt| {
-        let ident = text::ident().padded();
+        let ident = ident();
 
         let expr_block = stmt
             .repeated()
-            .then(expr_parser())
+            .then(expr().map(Some).or(empty().to(None)))
             .delimited_by(just('{'), just('}'))
-            .map(|(stmts, end_expr)| ExprBlock {
-                stmts,
-                end_expr: Some(end_expr),
-            })
+            .map(|(stmts, end_expr)| ExprBlock { stmts, end_expr })
             .padded();
+
+        let function_parameters = ident
+            .then_ignore(just(':'))
+            .then(type_signature())
+            .padded()
+            .separated_by(just(','))
+            .delimited_by(just('('), just(')'));
+
+        let return_type = just("->")
+            .padded()
+            .ignore_then(type_signature())
+            .map(Some)
+            .padded();
+
+        let optional_return_type = return_type.or(empty().to(None));
+
+        let function_decl = text::keyword("fn")
+            .ignore_then(ident)
+            .then(function_parameters)
+            .then(optional_return_type)
+            .then(expr_block.clone())
+            .map(|(((name, params), return_type), body)| {
+                Stmt::Function(Function {
+                    name,
+                    params,
+                    return_type: return_type,
+                    body,
+                })
+            });
 
         let let_decl = text::keyword("let")
             .ignore_then(ident)
             .then_ignore(just('='))
-            .then(expr_parser().padded())
+            .then(expr().padded())
             .then_ignore(just(';'))
             .map(|(ident, expr)| Stmt::Let(ident, expr));
 
@@ -96,7 +148,7 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
             .ignore_then(ident)
             .then_ignore(just('='))
             .then_ignore(text::keyword("if").padded())
-            .then(expr_parser())
+            .then(expr())
             .then(expr_block.clone())
             .then_ignore(text::keyword("else"))
             .then(expr_block)
@@ -109,9 +161,11 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
                 },
             );
 
-        let_if_decl.or(let_decl).or(expr_parser()
-            .then_ignore(just(';').padded())
-            .map(Stmt::Expr))
+        function_decl
+            .or(let_if_decl)
+            .or(let_decl)
+            .or(expr().then_ignore(just(';')).map(Stmt::Expr))
+            .padded()
     })
 }
 
@@ -125,63 +179,45 @@ mod tests {
 
     #[test]
     fn test_parser_bool() {
-        assert_eq!(
-            expr_parser().parse("true"),
-            Ok(Expr::Value(Value::Bool(true)))
-        );
-        assert_eq!(
-            expr_parser().parse("false"),
-            Ok(Expr::Value(Value::Bool(false)))
-        );
+        assert_eq!(expr().parse("true"), Ok(Expr::Value(Value::Bool(true))));
+        assert_eq!(expr().parse("false"), Ok(Expr::Value(Value::Bool(false))));
     }
 
     #[test]
     fn test_parse_int() {
-        assert_eq!(expr_parser().parse("10"), Ok(Expr::Value(Value::I32(10))));
-        assert_eq!(expr_parser().parse("2"), Ok(Expr::Value(Value::I32(2))));
+        assert_eq!(expr().parse("10"), Ok(Expr::Value(Value::I32(10))));
+        assert_eq!(expr().parse("2"), Ok(Expr::Value(Value::I32(2))));
     }
 
     #[test]
     fn test_parse_float() {
-        assert_eq!(
-            expr_parser().parse("10.5"),
-            Ok(Expr::Value(Value::F32(10.5)))
-        );
-        assert_eq!(expr_parser().parse("2.1"), Ok(Expr::Value(Value::F32(2.1))));
+        assert_eq!(expr().parse("10.5"), Ok(Expr::Value(Value::F32(10.5))));
+        assert_eq!(expr().parse("2.1"), Ok(Expr::Value(Value::F32(2.1))));
     }
 
     #[test]
     fn test_parse_variable() {
+        assert_eq!(expr().parse("abcd"), Ok(Expr::Variable("abcd".to_string())));
         assert_eq!(
-            expr_parser().parse("abcd"),
-            Ok(Expr::Variable("abcd".to_string()))
-        );
-        assert_eq!(
-            expr_parser().parse("foo_bar"),
+            expr().parse("foo_bar"),
             Ok(Expr::Variable("foo_bar".to_string()))
         );
         assert_eq!(
-            expr_parser().parse("fooBar"),
+            expr().parse("fooBar"),
             Ok(Expr::Variable("fooBar".to_string()))
         );
         assert_eq!(
-            expr_parser().parse("_fooBar"),
+            expr().parse("_fooBar"),
             Ok(Expr::Variable("_fooBar".to_string()))
         );
-        assert_eq!(
-            expr_parser().parse("_"),
-            Ok(Expr::Variable("_".to_string()))
-        );
-        assert_eq!(
-            expr_parser().parse("a3"),
-            Ok(Expr::Variable("a3".to_string()))
-        );
+        assert_eq!(expr().parse("_"), Ok(Expr::Variable("_".to_string())));
+        assert_eq!(expr().parse("a3"), Ok(Expr::Variable("a3".to_string())));
     }
 
     #[test]
     fn test_parse_unary() {
         assert_eq!(
-            expr_parser().parse("-10"),
+            expr().parse("-10"),
             Ok(Expr::Unary(
                 UnaryOp::Negate,
                 Box::new(Expr::Value(Value::I32(10)))
@@ -189,7 +225,7 @@ mod tests {
         );
 
         assert_eq!(
-            expr_parser().parse("!bar"),
+            expr().parse("!bar"),
             Ok(Expr::Unary(
                 UnaryOp::Not,
                 Box::new(Expr::Variable("bar".to_string()))
@@ -197,7 +233,7 @@ mod tests {
         );
 
         assert_eq!(
-            expr_parser().parse("-!10"),
+            expr().parse("-!10"),
             Ok(Expr::Unary(
                 UnaryOp::Negate,
                 Box::new(Expr::Unary(
@@ -211,7 +247,7 @@ mod tests {
     #[test]
     fn test_parse_multiply() {
         assert_eq!(
-            expr_parser().parse("10 * 11"),
+            expr().parse("10 * 11"),
             Ok(Expr::Binary(
                 BinaryOp::Multiply,
                 Box::new(Expr::Value(Value::I32(10))),
@@ -220,7 +256,7 @@ mod tests {
         );
 
         assert_eq!(
-            expr_parser().parse("10 / 11"),
+            expr().parse("10 / 11"),
             Ok(Expr::Binary(
                 BinaryOp::Divide,
                 Box::new(Expr::Value(Value::I32(10))),
@@ -229,7 +265,7 @@ mod tests {
         );
 
         assert_eq!(
-            expr_parser().parse("10 / 11 / 12"),
+            expr().parse("10 / 11 / 12"),
             Ok(Expr::Binary(
                 BinaryOp::Divide,
                 Box::new(Expr::Binary(
@@ -245,7 +281,7 @@ mod tests {
     #[test]
     fn test_parse_addition() {
         assert_eq!(
-            expr_parser().parse("10 + 11"),
+            expr().parse("10 + 11"),
             Ok(Expr::Binary(
                 BinaryOp::Add,
                 Box::new(Expr::Value(Value::I32(10))),
@@ -254,7 +290,7 @@ mod tests {
         );
 
         assert_eq!(
-            expr_parser().parse("10 - 11"),
+            expr().parse("10 - 11"),
             Ok(Expr::Binary(
                 BinaryOp::Subtract,
                 Box::new(Expr::Value(Value::I32(10))),
@@ -266,7 +302,7 @@ mod tests {
     #[test]
     fn test_parse_parens() {
         assert_eq!(
-            expr_parser().parse("foo + (11 * 2)"),
+            expr().parse("foo + (11 * 2)"),
             Ok(Expr::Binary(
                 BinaryOp::Add,
                 Box::new(Expr::Variable("foo".to_string())),
@@ -279,12 +315,65 @@ mod tests {
         );
 
         assert_eq!(
-            expr_parser().parse("(10 - 11)"),
+            expr().parse("(10 - 11)"),
             Ok(Expr::Binary(
                 BinaryOp::Subtract,
                 Box::new(Expr::Value(Value::I32(10))),
                 Box::new(Expr::Value(Value::I32(11)),)
             ))
+        );
+    }
+
+    #[test]
+    fn test_parse_call() {
+        assert_eq!(
+            expr().parse("foo()"),
+            Ok(Expr::Call {
+                callee: Box::new(Expr::Variable("foo".to_string())),
+                args: vec![],
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_function() {
+        assert_eq!(
+            parser().parse("fn foo() { 20 }"),
+            Ok(vec![Stmt::Function(Function {
+                name: "foo".to_string(),
+                params: vec![],
+                return_type: None,
+                body: ExprBlock {
+                    stmts: vec![],
+                    end_expr: Some(Expr::Value(Value::I32(20))),
+                },
+            })])
+        );
+
+        assert_eq!(
+            parser().parse("fn foo() -> i32 { 20 }"),
+            Ok(vec![Stmt::Function(Function {
+                name: "foo".to_string(),
+                params: vec![],
+                return_type: Some(TypeSig::I32),
+                body: ExprBlock {
+                    stmts: vec![],
+                    end_expr: Some(Expr::Value(Value::I32(20))),
+                },
+            })])
+        );
+
+        assert_eq!(
+            parser().parse("fn foo() { let name = 10; }"),
+            Ok(vec![Stmt::Function(Function {
+                name: "foo".to_string(),
+                params: vec![],
+                return_type: None,
+                body: ExprBlock {
+                    stmts: vec![Stmt::Let("name".to_string(), Expr::Value(Value::I32(10)))],
+                    end_expr: None,
+                },
+            })])
         );
     }
 
