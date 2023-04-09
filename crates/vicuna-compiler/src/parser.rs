@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, ExprBlock, Function, Stmt, TypeSig, UnaryOp, Value};
+use crate::ast::{BinaryOp, Expr, ExprBlock, Function, PostFix, Stmt, TypeSig, UnaryOp, Value};
 use anyhow::{anyhow, Result};
 use chumsky::prelude::*;
 use tree_sitter_c2rust::{Language, Tree};
@@ -42,17 +42,25 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .or(ident.map(Expr::Variable))
             .padded();
 
+        let args = expr
+            .clone()
+            .separated_by(just(','))
+            .allow_trailing()
+            .delimited_by(just('('), just(')'))
+            .map(PostFix::Args);
+
+        let field = just('.').ignore_then(ident.clone()).map(PostFix::Field);
+
+        let index = just('[')
+            .ignore_then(expr.clone())
+            .then_ignore(just(']'))
+            .map(Box::new)
+            .map(PostFix::Index);
+
         let call = atom
             .clone()
-            .then(
-                expr.separated_by(just(','))
-                    .allow_trailing()
-                    .delimited_by(just('('), just(')')),
-            )
-            .map(|(callee, args)| Expr::Call {
-                callee: Box::new(callee),
-                args,
-            });
+            .then(args.or(field).or(index).repeated())
+            .foldl(|callee, post_fix| Expr::PostFix(Box::new(callee), post_fix));
 
         let op = |c| just(c).padded();
 
@@ -178,7 +186,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parser_bool() {
+    fn test_parse_bool() {
         assert_eq!(expr().parse("true"), Ok(Expr::Value(Value::Bool(true))));
         assert_eq!(expr().parse("false"), Ok(Expr::Value(Value::Bool(false))));
     }
@@ -328,10 +336,29 @@ mod tests {
     fn test_parse_call() {
         assert_eq!(
             expr().parse("foo()"),
-            Ok(Expr::Call {
-                callee: Box::new(Expr::Variable("foo".to_string())),
-                args: vec![],
-            })
+            Ok(Expr::PostFix(
+                Box::new(Expr::Variable("foo".to_string())),
+                PostFix::Args(vec![]),
+            ))
+        );
+
+        assert_eq!(
+            expr().parse("foo(10)"),
+            Ok(Expr::PostFix(
+                Box::new(Expr::Variable("foo".to_string())),
+                PostFix::Args(vec![Expr::Value(Value::I32(10))]),
+            ))
+        );
+
+        assert_eq!(
+            expr().parse("foo(10)(20)"),
+            Ok(Expr::PostFix(
+                Box::new(Expr::PostFix(
+                    Box::new(Expr::Variable("foo".to_string())),
+                    PostFix::Args(vec![Expr::Value(Value::I32(10))]),
+                )),
+                PostFix::Args(vec![Expr::Value(Value::I32(20))]),
+            ))
         );
     }
 

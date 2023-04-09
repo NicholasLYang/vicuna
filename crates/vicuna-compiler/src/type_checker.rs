@@ -11,7 +11,7 @@
 //!  - Borrow checking
 //!
 use crate::ast::{
-    BinaryOp, Expr, Function, Program, Stmt, TypeDeclaration, TypeSig, UnaryOp, Value,
+    BinaryOp, Expr, Function, PostFix, Program, Stmt, TypeDeclaration, TypeSig, UnaryOp, Value,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -27,6 +27,7 @@ pub enum Type {
     Bool,
     Void,
     String,
+    Array(Box<Type>),
     Function {
         param_types: Vec<Type>,
         return_type: Box<Type>,
@@ -42,6 +43,7 @@ impl Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::Void => write!(f, "void"),
             Type::String => write!(f, "string"),
+            Type::Array(ty) => write!(f, "{}[]", ty),
             Type::Function {
                 param_types,
                 return_type,
@@ -111,6 +113,9 @@ pub enum TypeError {
     UndefinedVariable(Name),
     ArityMismatch(usize, usize),
     NotCallable(Type),
+    NotStruct(Type),
+    NotArray(Type),
+    UndefinedField { struct_name: Name, field_name: Name },
 }
 
 // TODO: Make this some fancy error display
@@ -125,6 +130,16 @@ impl Display for TypeError {
                 write!(f, "Expected {} arguments, got {}", expected, actual)
             }
             TypeError::NotCallable(ty) => write!(f, "Type {} is not callable", ty),
+            TypeError::NotStruct(ty) => write!(f, "Type {} is not a struct", ty),
+            TypeError::NotArray(ty) => write!(f, "Type {} is not an array", ty),
+            TypeError::UndefinedField {
+                struct_name,
+                field_name,
+            } => write!(
+                f,
+                "Struct {} does not have field {}",
+                struct_name, field_name
+            ),
         }
     }
 }
@@ -340,9 +355,7 @@ impl TypeChecker {
                     None
                 }
             }
-            Expr::Call { callee, args } => {
-                println!("callee: {:?}", callee);
-                println!("symbol table: {:?}", self.symbol_table);
+            Expr::PostFix(callee, PostFix::Args(args)) => {
                 let callee_ty = self.check_expr(callee)?;
                 if let Type::Function {
                     param_types,
@@ -365,6 +378,40 @@ impl TypeChecker {
                     Some(*return_type)
                 } else {
                     self.errors.push(TypeError::NotCallable(callee_ty));
+                    None
+                }
+            }
+            Expr::PostFix(callee, PostFix::Field(field)) => {
+                let callee_ty = self.check_expr(callee)?;
+                if let Type::Named(struct_name) = callee_ty {
+                    let fields = self.named_types.get(&struct_name)?;
+                    if let Some(ty) = fields.get(field) {
+                        Some(ty.clone())
+                    } else {
+                        self.errors.push(TypeError::UndefinedField {
+                            struct_name: struct_name.clone(),
+                            field_name: field.clone(),
+                        });
+
+                        None
+                    }
+                } else {
+                    self.errors.push(TypeError::NotStruct(callee_ty));
+                    None
+                }
+            }
+            Expr::PostFix(callee, PostFix::Index(index)) => {
+                let callee_ty = self.check_expr(callee)?;
+                let index_ty = self.check_expr(index)?;
+                if index_ty != Type::I32 {
+                    self.errors
+                        .push(TypeError::TypeMismatch(Type::I32, index_ty));
+                }
+
+                if let Type::Array(ty) = callee_ty {
+                    Some(*ty)
+                } else {
+                    self.errors.push(TypeError::NotArray(callee_ty));
                     None
                 }
             }
@@ -484,10 +531,7 @@ mod tests {
                 }),
                 Stmt::Let(
                     "x".into(),
-                    Expr::Call {
-                        callee: Box::new(Expr::Variable("f".into())),
-                        args: vec![],
-                    },
+                    Expr::PostFix(Box::new(Expr::Variable("f".into())), PostFix::Args(vec![])),
                 ),
             ],
         };
@@ -499,10 +543,7 @@ mod tests {
             type_declarations: vec![],
             statements: vec![Stmt::Let(
                 "x".into(),
-                Expr::Call {
-                    callee: Box::new(Expr::Variable("f".into())),
-                    args: vec![],
-                },
+                Expr::PostFix(Box::new(Expr::Variable("f".into())), PostFix::Args(vec![])),
             )],
         };
 

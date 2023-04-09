@@ -1,6 +1,6 @@
 use crate::ast::{build_ast, Program};
 use crate::js_backend::JsBackend;
-use crate::parser::parse;
+use crate::parser::{parse, parser};
 use crate::type_checker::{TypeChecker, TypeError};
 use anyhow::Result;
 use serde::Serialize;

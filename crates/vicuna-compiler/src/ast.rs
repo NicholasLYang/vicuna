@@ -56,9 +56,19 @@ pub struct ExprBlock {
 pub enum Expr {
     Value(Value),
     Variable(String),
-    Call { callee: Box<Expr>, args: Vec<Expr> },
+    // Combination of call, i.e. `foo(10)`, field access, i.e. `foo.bar`,
+    // and index access, i.e. `foo[10]`.
+    // This could probably be optimized by storing `PostFix` as a Vec
+    PostFix(Box<Expr>, PostFix),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum PostFix {
+    Field(String),
+    Index(Box<Expr>),
+    Args(Vec<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

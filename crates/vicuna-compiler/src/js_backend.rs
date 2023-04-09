@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Function, Program, Stmt, UnaryOp, Value};
+use crate::ast::{BinaryOp, Expr, Function, PostFix, Program, Stmt, UnaryOp, Value};
 use anyhow::Result;
 use std::io::Write;
 
@@ -97,7 +97,7 @@ impl<T: Write> JsBackend<T> {
                     self.output.write_all(name.as_bytes())?;
                 }
             }
-            Expr::Call { callee, args } => {
+            Expr::PostFix(callee, PostFix::Args(args)) => {
                 self.emit_expr(callee)?;
                 self.output.write_all(b"(")?;
                 let arity = args.len();
@@ -108,6 +108,17 @@ impl<T: Write> JsBackend<T> {
                     }
                 }
                 self.output.write_all(b")")?;
+            }
+            Expr::PostFix(callee, PostFix::Index(index)) => {
+                self.emit_expr(callee)?;
+                self.output.write_all(b"[")?;
+                self.emit_expr(index)?;
+                self.output.write_all(b"]")?;
+            }
+            Expr::PostFix(callee, PostFix::Field(name)) => {
+                self.emit_expr(callee)?;
+                self.output.write_all(b".")?;
+                self.output.write_all(name.as_bytes())?;
             }
             Expr::Binary(op, lhs, rhs) => {
                 let op_str = match op {
