@@ -4,7 +4,6 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 pub struct WasmOutput {
     js: Option<String>,
-    cst: Option<String>,
     ast: Option<String>,
     errors: Vec<String>,
 }
@@ -14,11 +13,6 @@ impl WasmOutput {
     #[wasm_bindgen(getter)]
     pub fn js(&self) -> Option<String> {
         self.js.clone()
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn cst(&self) -> Option<String> {
-        self.cst.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -41,12 +35,18 @@ fn init() {
 #[wasm_bindgen]
 pub fn run_compiler(source: &str) -> WasmOutput {
     let mut errors = vec![];
-    let cst = match parse(source) {
-        Ok(cst) => Some(format!("{:#?}", cst)),
-        Err(err) => {
-            errors.push(err.to_string());
-            None
-        }
+    let (program, parse_errors) = parse(source);
+
+    for error in parse_errors {
+        errors.push(error.to_string());
+    }
+
+    let Some(program) = program else {
+        return WasmOutput {
+            js: None,
+            ast: None,
+            errors,
+        };
     };
 
     match compile(source) {
@@ -59,15 +59,13 @@ pub fn run_compiler(source: &str) -> WasmOutput {
 
             WasmOutput {
                 js: Some(js),
-                cst,
                 ast: Some(format!("{:#?}", ast)),
                 errors,
             }
         }
         Err(err) => WasmOutput {
             js: None,
-            cst,
-            ast: None,
+            ast: Some(format!("{:#?}", program)),
             errors: vec![err.to_string()],
         },
     }

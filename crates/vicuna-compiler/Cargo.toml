@@ -13,7 +13,6 @@ anyhow = { workspace = true }
 chumsky = "0.9.2"
 serde = { version = "1.0.147", features = ["derive"] }
 tracing = "0.1.37"
-tree-sitter-c2rust = "0.20.9"
 
 
 [build-dependencies]

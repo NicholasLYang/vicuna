@@ -1,22 +1,8 @@
-use crate::ast::{BinaryOp, Expr, ExprBlock, Function, PostFix, Stmt, TypeSig, UnaryOp, Value};
-use anyhow::{anyhow, Result};
+use crate::ast::{
+    BinaryOp, Expr, ExprBlock, Function, PostFix, Program, Stmt, TypeDeclaration, TypeSig, UnaryOp,
+    Value,
+};
 use chumsky::prelude::*;
-use tree_sitter_c2rust::{Language, Tree};
-
-extern "C" {
-    fn tree_sitter_vicuna() -> Language;
-}
-
-pub fn parse(source: &str) -> Result<Tree> {
-    let mut parser = tree_sitter_c2rust::Parser::new();
-    parser.set_language(unsafe { tree_sitter_vicuna() })?;
-
-    let tree = parser
-        .parse(&source, None)
-        .ok_or_else(|| anyhow!("Unable to parse code"))?;
-
-    Ok(tree)
-}
 
 pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
     let ident = text::ident().padded();
@@ -35,10 +21,16 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .or(text::keyword("false").to(false))
             .map(|b| Expr::Value(Value::Bool(b)));
 
+        let string = just("\"")
+            .ignore_then(none_of('"').repeated())
+            .then_ignore(just("\""))
+            .map(|chars| Expr::Value(Value::String(chars.into_iter().collect())));
+
         let atom = float
             .or(int)
             .or(expr.clone().delimited_by(just('('), just(')')))
             .or(bool)
+            .or(string)
             .or(ident.map(Expr::Variable))
             .padded();
 
@@ -103,6 +95,31 @@ fn type_signature() -> impl Parser<char, TypeSig, Error = Simple<char>> {
 
 fn ident() -> impl Parser<char, String, Error = Simple<char>> + Clone + Copy {
     text::ident().padded()
+}
+
+fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = Simple<char>> {
+    let ident = ident();
+
+    let field = ident
+        .then_ignore(just(':'))
+        .then(type_signature())
+        .padded()
+        .separated_by(just(','))
+        .allow_trailing()
+        .padded();
+
+    let fields = field.delimited_by(just('{'), just('}'));
+
+    let struct_declaration =
+        text::keyword("struct")
+            .ignore_then(ident)
+            .then(fields)
+            .map(|(name, fields)| TypeDeclaration::Struct {
+                name,
+                fields: fields.into_iter().collect(),
+            });
+
+    struct_declaration
 }
 
 fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
@@ -177,13 +194,43 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
     })
 }
 
-pub fn parser() -> impl Parser<char, Vec<Stmt>, Error = Simple<char>> {
-    stmt().repeated().then_ignore(end())
+enum ParserOutput {
+    Stmt(Stmt),
+    TypeDeclaration(TypeDeclaration),
+}
+
+fn parser() -> impl Parser<char, Vec<ParserOutput>, Error = Simple<char>> {
+    stmt()
+        .map(ParserOutput::Stmt)
+        .or(type_declaration().map(ParserOutput::TypeDeclaration))
+        .repeated()
+        .then_ignore(end())
+}
+
+pub fn parse(source: &str) -> (Option<Program>, Vec<Simple<char>>) {
+    let (output, errors) = parser().parse_recovery(source);
+    let output = output.map(|output| {
+        let mut statements = vec![];
+        let mut type_declarations = vec![];
+        for item in output {
+            match item {
+                ParserOutput::Stmt(stmt) => statements.push(stmt),
+                ParserOutput::TypeDeclaration(decl) => type_declarations.push(decl),
+            }
+        }
+        Program {
+            statements,
+            type_declarations,
+        }
+    });
+
+    (output, errors)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_parse_bool() {
@@ -365,8 +412,8 @@ mod tests {
     #[test]
     fn test_parse_function() {
         assert_eq!(
-            parser().parse("fn foo() { 20 }"),
-            Ok(vec![Stmt::Function(Function {
+            stmt().parse("fn foo() { 20 }"),
+            Ok(Stmt::Function(Function {
                 name: "foo".to_string(),
                 params: vec![],
                 return_type: None,
@@ -374,12 +421,12 @@ mod tests {
                     stmts: vec![],
                     end_expr: Some(Expr::Value(Value::I32(20))),
                 },
-            })])
+            }))
         );
 
         assert_eq!(
-            parser().parse("fn foo() -> i32 { 20 }"),
-            Ok(vec![Stmt::Function(Function {
+            stmt().parse("fn foo() -> i32 { 20 }"),
+            Ok(Stmt::Function(Function {
                 name: "foo".to_string(),
                 params: vec![],
                 return_type: Some(TypeSig::I32),
@@ -387,12 +434,12 @@ mod tests {
                     stmts: vec![],
                     end_expr: Some(Expr::Value(Value::I32(20))),
                 },
-            })])
+            }))
         );
 
         assert_eq!(
-            parser().parse("fn foo() { let name = 10; }"),
-            Ok(vec![Stmt::Function(Function {
+            stmt().parse("fn foo() { let name = 10; }"),
+            Ok(Stmt::Function(Function {
                 name: "foo".to_string(),
                 params: vec![],
                 return_type: None,
@@ -400,23 +447,20 @@ mod tests {
                     stmts: vec![Stmt::Let("name".to_string(), Expr::Value(Value::I32(10)))],
                     end_expr: None,
                 },
-            })])
+            }))
         );
     }
 
     #[test]
     fn test_parse_statement() {
         assert_eq!(
-            parser().parse("let a = 10;"),
-            Ok(vec![Stmt::Let(
-                "a".to_string(),
-                Expr::Value(Value::I32(10))
-            )])
+            stmt().parse("let a = 10;"),
+            Ok(Stmt::Let("a".to_string(), Expr::Value(Value::I32(10))))
         );
 
         assert_eq!(
-            parser().parse("let a = if b { 10 } else { 20 }"),
-            Ok(vec![Stmt::LetIf {
+            stmt().parse("let a = if b { 10 } else { 20 }"),
+            Ok(Stmt::LetIf {
                 name: "a".to_string(),
                 condition: Expr::Variable("b".to_string()),
                 then_block: ExprBlock {
@@ -427,11 +471,11 @@ mod tests {
                     stmts: vec![],
                     end_expr: Some(Expr::Value(Value::I32(20)))
                 },
-            }])
+            })
         );
 
         assert_eq!(
-            parser().parse(
+            stmt().repeated().parse(
                 "let a = if b { 10 } else { 20 }
             10 + 11;
             let h = foobar;"
@@ -457,5 +501,45 @@ mod tests {
                 Stmt::Let("h".to_string(), Expr::Variable("foobar".to_string()))
             ])
         )
+    }
+
+    #[test]
+    fn test_parse_struct_declaration() {
+        assert_eq!(
+            type_declaration().parse("struct Foo { a: i32, b: i32 }"),
+            Ok(TypeDeclaration::Struct {
+                name: "Foo".to_string(),
+                fields: vec![
+                    ("a".to_string(), TypeSig::I32),
+                    ("b".to_string(), TypeSig::I32),
+                ]
+                .into_iter()
+                .collect(),
+            })
+        );
+
+        assert_eq!(
+            type_declaration().parse("struct Foo {}"),
+            Ok(TypeDeclaration::Struct {
+                name: "Foo".to_string(),
+                fields: HashMap::new(),
+            })
+        );
+
+        assert_eq!(
+            type_declaration().parse("struct Foo { a: i32 }"),
+            Ok(TypeDeclaration::Struct {
+                name: "Foo".to_string(),
+                fields: vec![("a".to_string(), TypeSig::I32)].into_iter().collect(),
+            })
+        );
+
+        assert_eq!(
+            type_declaration().parse("struct Foo { a: i32, }"),
+            Ok(TypeDeclaration::Struct {
+                name: "Foo".to_string(),
+                fields: vec![("a".to_string(), TypeSig::I32)].into_iter().collect(),
+            })
+        );
     }
 }

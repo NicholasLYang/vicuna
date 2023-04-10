@@ -200,7 +200,7 @@ impl TypeChecker {
         for stmt in stmts {
             if let Stmt::Function(Function {
                 name,
-                return_type: return_type,
+                return_type,
                 params,
                 ..
             }) = stmt
