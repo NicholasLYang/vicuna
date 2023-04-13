@@ -13,6 +13,10 @@ pub enum TypeDeclaration {
         name: String,
         fields: HashMap<String, TypeSig>,
     },
+    Enum {
+        name: String,
+        variants: HashMap<String, HashMap<String, TypeSig>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

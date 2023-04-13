@@ -3,6 +3,7 @@ use crate::ast::{
     Value,
 };
 use chumsky::prelude::*;
+use std::collections::HashMap;
 
 pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
     let ident = text::ident().padded();
@@ -97,7 +98,7 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
     })
 }
 
-fn type_signature() -> impl Parser<char, TypeSig, Error = Simple<char>> {
+fn type_signature() -> impl Parser<char, TypeSig, Error = Simple<char>> + Clone {
     ident().map(|id| match id.as_str() {
         "i32" => TypeSig::I32,
         "f32" => TypeSig::F32,
@@ -114,26 +115,36 @@ fn ident() -> impl Parser<char, String, Error = Simple<char>> + Clone + Copy {
 fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = Simple<char>> {
     let ident = ident();
 
-    let field = ident
-        .then_ignore(just(':'))
-        .then(type_signature())
-        .padded()
+    let field = ident.then_ignore(just(':')).then(type_signature()).padded();
+
+    let fields = field
         .separated_by(just(','))
         .allow_trailing()
-        .padded();
+        .padded()
+        .delimited_by(just('{'), just('}'))
+        .map(|fields| fields.into_iter().collect::<HashMap<_, _>>());
 
-    let fields = field.delimited_by(just('{'), just('}'));
+    let struct_declaration = text::keyword("struct")
+        .ignore_then(ident.clone())
+        .then(fields.clone())
+        .map(|(name, fields)| TypeDeclaration::Struct { name, fields });
 
-    let struct_declaration =
-        text::keyword("struct")
-            .ignore_then(ident)
-            .then(fields)
-            .map(|(name, fields)| TypeDeclaration::Struct {
-                name,
-                fields: fields.into_iter().collect(),
-            });
+    let enum_variant = ident.then(fields.or(empty().to(HashMap::new()))).padded();
 
-    struct_declaration
+    let enum_declaration = text::keyword("enum")
+        .ignore_then(ident)
+        .then(
+            enum_variant
+                .separated_by(just(','))
+                .allow_trailing()
+                .delimited_by(just('{'), just('}')),
+        )
+        .map(|(name, variants)| TypeDeclaration::Enum {
+            name,
+            variants: variants.into_iter().collect(),
+        });
+
+    enum_declaration.or(struct_declaration)
 }
 
 fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
@@ -631,6 +642,48 @@ mod tests {
             Ok(TypeDeclaration::Struct {
                 name: "Foo".to_string(),
                 fields: vec![("a".to_string(), TypeSig::I32)].into_iter().collect(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_enum_declaration() {
+        assert_eq!(
+            type_declaration().parse("enum Foo { A, B, C }"),
+            Ok(TypeDeclaration::Enum {
+                name: "Foo".to_string(),
+                variants: vec![
+                    ("A".to_string(), HashMap::new()),
+                    ("B".to_string(), HashMap::new()),
+                    ("C".to_string(), HashMap::new())
+                ]
+                .into_iter()
+                .collect()
+            })
+        );
+
+        assert_eq!(
+            type_declaration().parse("enum Foo { A }"),
+            Ok(TypeDeclaration::Enum {
+                name: "Foo".to_string(),
+                variants: vec![("A".to_string(), HashMap::new())]
+                    .into_iter()
+                    .collect()
+            })
+        );
+
+        assert_eq!(
+            type_declaration().parse("enum Foo { A { foo: string } }"),
+            Ok(TypeDeclaration::Enum {
+                name: "Foo".to_string(),
+                variants: vec![(
+                    "A".to_string(),
+                    vec![("foo".to_string(), TypeSig::String)]
+                        .into_iter()
+                        .collect()
+                )]
+                .into_iter()
+                .collect()
             })
         );
     }
