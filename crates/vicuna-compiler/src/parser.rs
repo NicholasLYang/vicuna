@@ -26,11 +26,25 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .then_ignore(just("\""))
             .map(|chars| Expr::Value(Value::String(chars.into_iter().collect())));
 
+        let struct_literal = ident
+            .clone()
+            .then_ignore(just('{'))
+            .then(
+                ident
+                    .clone()
+                    .then_ignore(just(':'))
+                    .then(expr.clone())
+                    .separated_by(just(',')),
+            )
+            .then_ignore(just('}'))
+            .map(|(name, fields)| Expr::Struct(name, fields.into_iter().collect()));
+
         let atom = float
             .or(int)
             .or(expr.clone().delimited_by(just('('), just(')')))
             .or(bool)
             .or(string)
+            .or(struct_literal)
             .or(ident.map(Expr::Variable))
             .padded();
 
@@ -267,6 +281,22 @@ mod tests {
         );
         assert_eq!(expr().parse("_"), Ok(Expr::Variable("_".to_string())));
         assert_eq!(expr().parse("a3"), Ok(Expr::Variable("a3".to_string())));
+    }
+
+    #[test]
+    fn test_parse_struct_literal() {
+        assert_eq!(
+            expr().parse("Foo { a: 10, b: 20 }"),
+            Ok(Expr::Struct(
+                "Foo".to_string(),
+                vec![
+                    ("a".to_string(), Expr::Value(Value::I32(10))),
+                    ("b".to_string(), Expr::Value(Value::I32(20))),
+                ]
+                .into_iter()
+                .collect()
+            ))
+        );
     }
 
     #[test]

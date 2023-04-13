@@ -110,7 +110,9 @@ pub struct TypeChecker {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum TypeError {
     TypeMismatch(Type, Type),
+    FieldsMismatch(HashMap<Name, Type>, HashMap<Name, Option<Type>>),
     UndefinedVariable(Name),
+    UndefinedStruct(Name),
     ArityMismatch(usize, usize),
     NotCallable(Type),
     NotStruct(Type),
@@ -125,7 +127,11 @@ impl Display for TypeError {
             TypeError::TypeMismatch(expected, actual) => {
                 write!(f, "Expected type {}, got {}", expected, actual)
             }
+            TypeError::FieldsMismatch(expected, actual) => {
+                write!(f, "Expected fields {:?}, got {:?}", expected, actual)
+            }
             TypeError::UndefinedVariable(name) => write!(f, "Undefined variable {}", name),
+            TypeError::UndefinedStruct(name) => write!(f, "Undefined struct {}", name),
             TypeError::ArityMismatch(expected, actual) => {
                 write!(f, "Expected {} arguments, got {}", expected, actual)
             }
@@ -414,6 +420,51 @@ impl TypeChecker {
                     self.errors.push(TypeError::NotArray(callee_ty));
                     None
                 }
+            }
+            Expr::Struct(name, literal_fields) => {
+                let Some(mut struct_type_fields) = self.named_types.get(name).cloned() else {
+                    self.errors.push(TypeError::UndefinedStruct(name.clone()));
+                    return None;
+                };
+
+                if literal_fields.len() != struct_type_fields.len() {
+                    let struct_type_fields = struct_type_fields.clone();
+                    let literal_field_types = literal_fields
+                        .iter()
+                        .map(|(field_name, field_value)| {
+                            let field_ty = self.check_expr(field_value);
+                            (field_name.clone(), field_ty)
+                        })
+                        .collect::<HashMap<_, _>>();
+
+                    self.errors.push(TypeError::FieldsMismatch(
+                        struct_type_fields,
+                        literal_field_types,
+                    ));
+                    return None;
+                }
+
+                for (field_name, expr) in literal_fields.iter() {
+                    let expected_ty =
+                        if let Some(expected_ty) = struct_type_fields.remove(field_name) {
+                            expected_ty
+                        } else {
+                            self.errors.push(TypeError::UndefinedField {
+                                struct_name: name.clone(),
+                                field_name: field_name.clone(),
+                            });
+                            return None;
+                        };
+
+                    let expr_ty = self.check_expr(expr)?;
+
+                    if expr_ty != expected_ty {
+                        self.errors
+                            .push(TypeError::TypeMismatch(expr_ty.clone(), expected_ty));
+                    }
+                }
+
+                Some(Type::Named(name.clone()))
             }
         }
     }

@@ -140,6 +140,18 @@ impl<T: Write> JsBackend<T> {
                 self.output.write_all(&[op_str])?;
                 self.emit_expr(rhs)?;
             }
+            Expr::Struct(_, fields) => {
+                self.output.write_all(b"{")?;
+                for (i, (name, value)) in fields.iter().enumerate() {
+                    self.output.write_all(name.as_bytes())?;
+                    self.output.write_all(b": ")?;
+                    self.emit_expr(value)?;
+                    if i < fields.len() - 1 {
+                        self.output.write_all(b", ")?;
+                    }
+                }
+                self.output.write_all(b"}")?;
+            }
         }
 
         Ok(())

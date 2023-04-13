@@ -60,6 +60,7 @@ pub enum Expr {
     PostFix(Box<Expr>, PostFix),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
+    Struct(String, HashMap<String, Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

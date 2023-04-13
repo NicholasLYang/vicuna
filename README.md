@@ -10,6 +10,11 @@ the current reality for Vicuna.
 
 The name isn't even set in stone. I just liked the sound and wanted a name that referenced camels.
 
+Currently the compiler can build and compile simple programs with basic type checking. The current goal is to add:
+- [ ] Generics
+- [ ] Traits
+- [ ] Enums and pattern matching
+
 ## Why
 
 Why am I writing Vicuna? I've enjoyed using languages that compile to JavaScript like TypeScript and ReScript
@@ -53,3 +58,12 @@ More grandly, I'd agree with the aphorism to "always bet on JavaScript". JavaScr
 it's ubiquitous, and it works pretty darn well. It's a rare high level, dynamic language that performs
 decently. It has some really great libraries (and some...less great ones). As optimistic as I am about WebAssembly,
 I don't anticipate that we'll move away from JavaScript anytime soon.
+
+## Philosophy and Goals
+
+The goal is to create a language that is as close to my goals of expression oriented, type safe, and
+ergonomic, while also being a relatively simple transformation to JavaScript. This does mean that there are some
+restrictions that need to be put in place. For instance, a if expression with blocks, while
+very nice, is not a simple transformation to JavaScript. However, a let binding that assigns
+to an if expression with blocks? That's a very easy transformation. Similarly a function that ends 
+on an if expression is an easy transformation.
