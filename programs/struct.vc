@@ -4,5 +4,13 @@ struct Student {
 }
 
 fn get_name(student: Student) -> string {
-  "hello"
+  print(student.name);
+
+  student.name
+}
+
+fn new() -> Student {
+  let student = Student { name: "John", age: 20 };
+
+  student
 }

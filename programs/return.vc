@@ -1,0 +1,7 @@
+fn foo(a: bool) -> i32 {
+  if a {
+    return 5;
+  } else {
+    return 2;
+  }
+}

@@ -141,6 +141,7 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
         let ident = ident();
 
         let expr_block = stmt
+            .clone()
             .repeated()
             .then(expr().map(Some).or(empty().to(None)))
             .delimited_by(just('{'), just('}'))
@@ -171,7 +172,7 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
                 Stmt::Function(Function {
                     name,
                     params,
-                    return_type: return_type,
+                    return_type,
                     body,
                 })
             });
@@ -200,9 +201,33 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
                 },
             );
 
+        let block = stmt.repeated().delimited_by(just('{'), just('}'));
+
+        let optional_else = text::keyword("else")
+            .padded()
+            .ignore_then(block.clone())
+            .or(empty().to(Vec::new()));
+
+        let if_stmt = text::keyword("if")
+            .ignore_then(expr())
+            .then(block)
+            .then(optional_else)
+            .map(|((condition, then_block), else_block)| Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            });
+
+        let return_stmt = text::keyword("return")
+            .ignore_then(expr().padded().map(Some).or(empty().to(None)))
+            .then_ignore(just(';'))
+            .map(Stmt::Return);
+
         function_decl
             .or(let_if_decl)
             .or(let_decl)
+            .or(if_stmt)
+            .or(return_stmt)
             .or(expr().then_ignore(just(';')).map(Stmt::Expr))
             .padded()
     })
@@ -531,6 +556,43 @@ mod tests {
                 Stmt::Let("h".to_string(), Expr::Variable("foobar".to_string()))
             ])
         )
+    }
+
+    #[test]
+    fn test_parse_if_statement() {
+        assert_eq!(
+            stmt().parse(
+                "if b {
+               let a = 10;
+             } else {
+               let b = 20;
+             }"
+            ),
+            Ok(Stmt::If {
+                condition: Expr::Variable("b".to_string()),
+                then_block: vec![Stmt::Let("a".to_string(), Expr::Value(Value::I32(10)))],
+                else_block: vec![Stmt::Let("b".to_string(), Expr::Value(Value::I32(20)))],
+            })
+        );
+
+        assert_eq!(
+            stmt().parse("if b { 10; }"),
+            Ok(Stmt::If {
+                condition: Expr::Variable("b".to_string()),
+                then_block: vec![Stmt::Expr(Expr::Value(Value::I32(10)))],
+                else_block: vec![],
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_return_statement() {
+        assert_eq!(
+            stmt().parse("return 10;"),
+            Ok(Stmt::Return(Some(Expr::Value(Value::I32(10)))))
+        );
+
+        assert_eq!(stmt().parse("return;"), Ok(Stmt::Return(None)));
     }
 
     #[test]

@@ -16,6 +16,7 @@ use crate::ast::{
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::mem;
 
 // TODO: Intern strings
 type Name = String;
@@ -104,6 +105,7 @@ impl SymbolTable {
 pub struct TypeChecker {
     symbol_table: SymbolTable,
     named_types: HashMap<String, HashMap<Name, Type>>,
+    return_type: Option<Type>,
     pub(crate) errors: Vec<TypeError>,
 }
 
@@ -117,6 +119,7 @@ pub enum TypeError {
     NotCallable(Type),
     NotStruct(Type),
     NotArray(Type),
+    ReturnOutsideFunction,
     UndefinedField { struct_name: Name, field_name: Name },
 }
 
@@ -138,6 +141,7 @@ impl Display for TypeError {
             TypeError::NotCallable(ty) => write!(f, "Type {} is not callable", ty),
             TypeError::NotStruct(ty) => write!(f, "Type {} is not a struct", ty),
             TypeError::NotArray(ty) => write!(f, "Type {} is not an array", ty),
+            TypeError::ReturnOutsideFunction => write!(f, "Return statement outside function"),
             TypeError::UndefinedField {
                 struct_name,
                 field_name,
@@ -176,6 +180,7 @@ impl TypeChecker {
         Self {
             symbol_table: SymbolTable::new(),
             named_types: HashMap::new(),
+            return_type: None,
             errors: Vec::new(),
         }
     }
@@ -287,6 +292,10 @@ impl TypeChecker {
                     self.symbol_table.insert(name.clone(), ty.into());
                 }
 
+                let return_type: Type = return_type.as_ref().into();
+
+                let old_return_type = mem::replace(&mut self.return_type, Some(return_type));
+
                 self.check_block(&body.stmts);
 
                 let end_expr_ty = if let Some(end_expr) = &body.end_expr {
@@ -295,12 +304,49 @@ impl TypeChecker {
                     Some(Type::Void)
                 };
                 self.symbol_table.exit_scope();
+                let return_type = mem::replace(&mut self.return_type, old_return_type)
+                    .expect("return type should be set");
 
                 let end_expr_ty = end_expr_ty?;
-                let return_ty = return_type.as_ref().into();
-                if end_expr_ty != return_ty {
+
+                if end_expr_ty != return_type {
                     self.errors
-                        .push(TypeError::TypeMismatch(end_expr_ty, return_ty));
+                        .push(TypeError::TypeMismatch(end_expr_ty, return_type));
+                }
+            }
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                let condition_ty = self.check_expr(condition)?;
+                if condition_ty != Type::Bool {
+                    self.errors
+                        .push(TypeError::TypeMismatch(Type::Bool, condition_ty));
+                }
+
+                self.symbol_table.enter_scope();
+                self.check_block(then_block);
+                self.symbol_table.exit_scope();
+
+                self.symbol_table.enter_scope();
+                self.check_block(else_block);
+                self.symbol_table.exit_scope();
+            }
+            Stmt::Return(expr) => {
+                let ty = if let Some(expr) = expr {
+                    self.check_expr(expr)?
+                } else {
+                    Type::Void
+                };
+
+                if let Some(return_type) = &self.return_type {
+                    if ty != *return_type {
+                        self.errors
+                            .push(TypeError::TypeMismatch(ty, return_type.clone()));
+                    }
+                } else {
+                    self.errors.push(TypeError::ReturnOutsideFunction);
                 }
             }
         }
@@ -362,6 +408,12 @@ impl TypeChecker {
                 }
             }
             Expr::PostFix(callee, PostFix::Args(args)) => {
+                if let Expr::Variable(name) = callee.as_ref() {
+                    if name == "print" {
+                        return Some(Type::Void);
+                    }
+                }
+
                 let callee_ty = self.check_expr(callee)?;
                 if let Type::Function {
                     param_types,

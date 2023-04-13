@@ -63,9 +63,11 @@ impl<T: Write> JsBackend<T> {
                 name, params, body, ..
             }) => {
                 write!(self.output, "function {}(", name)?;
-                for (arg, _) in params {
+                for (idx, (arg, _)) in params.iter().enumerate() {
                     self.output.write_all(arg.as_bytes())?;
-                    self.output.write_all(b", ")?;
+                    if idx != params.len() - 1 {
+                        self.output.write_all(b", ")?;
+                    }
                 }
                 writeln!(self.output, ") {{")?;
                 for stmt in &body.stmts {
@@ -79,6 +81,31 @@ impl<T: Write> JsBackend<T> {
                 }
 
                 writeln!(self.output, "}}")?;
+            }
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                write!(self.output, "if (")?;
+                self.emit_expr(condition)?;
+                writeln!(self.output, ") {{")?;
+                for stmt in then_block {
+                    self.emit_stmt(stmt)?;
+                }
+
+                writeln!(self.output, "}} else {{")?;
+                for stmt in else_block {
+                    self.emit_stmt(&stmt)?;
+                }
+                writeln!(self.output, "}}")?;
+            }
+            Stmt::Return(expr) => {
+                self.output.write_all(b"return ")?;
+                if let Some(expr) = expr {
+                    self.emit_expr(expr)?;
+                }
+                self.output.write_all(b";\n")?;
             }
         }
         Ok(())

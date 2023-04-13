@@ -42,6 +42,12 @@ pub enum Stmt {
         else_block: ExprBlock,
     },
     Expr(Expr),
+    If {
+        condition: Expr,
+        then_block: Vec<Stmt>,
+        else_block: Vec<Stmt>,
+    },
+    Return(Option<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
