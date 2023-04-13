@@ -1,3 +1,0 @@
-[submodule "wasm-stdlib-hack"]
-	path = wasm-stdlib-hack
-	url = https://github.com/guybedford/wasm-stdlib-hack
