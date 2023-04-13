@@ -261,7 +261,7 @@ impl TypeChecker {
                 self.check_block(&else_block.stmts);
 
                 let else_ty = if let Some(end_expr) = &else_block.end_expr {
-                    self.check_expr(&end_expr)
+                    self.check_expr(end_expr)
                 } else {
                     Some(Type::Void)
                 };
@@ -272,7 +272,7 @@ impl TypeChecker {
                 let else_ty = else_ty?;
                 if then_ty != else_ty {
                     self.errors
-                        .push(TypeError::TypeMismatch(then_ty.clone(), else_ty.clone()));
+                        .push(TypeError::TypeMismatch(then_ty.clone(), else_ty));
                 }
 
                 self.symbol_table.insert(name.clone(), then_ty);
@@ -366,8 +366,7 @@ impl TypeChecker {
                         } else if lhs_ty == Type::F32 && rhs_ty == Type::F32 {
                             Some(Type::F32)
                         } else {
-                            self.errors
-                                .push(TypeError::TypeMismatch(lhs_ty.clone(), rhs_ty.clone()));
+                            self.errors.push(TypeError::TypeMismatch(lhs_ty, rhs_ty));
                             None
                         }
                     }

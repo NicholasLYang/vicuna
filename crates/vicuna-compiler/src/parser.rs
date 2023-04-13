@@ -28,11 +28,9 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .map(|chars| Expr::Value(Value::String(chars.into_iter().collect())));
 
         let struct_literal = ident
-            .clone()
             .then_ignore(just('{'))
             .then(
                 ident
-                    .clone()
                     .then_ignore(just(':'))
                     .then(expr.clone())
                     .separated_by(just(',')),
@@ -56,7 +54,7 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .delimited_by(just('('), just(')'))
             .map(PostFix::Args);
 
-        let field = just('.').ignore_then(ident.clone()).map(PostFix::Field);
+        let field = just('.').ignore_then(ident).map(PostFix::Field);
 
         let index = just('[')
             .ignore_then(expr.clone())
@@ -89,12 +87,10 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
         let add: fn(_, _) -> _ = |lhs, rhs| Expr::Binary(BinaryOp::Add, lhs, rhs);
         let sub: fn(_, _) -> _ = |lhs, rhs| Expr::Binary(BinaryOp::Subtract, lhs, rhs);
 
-        let sum = product
+        product
             .clone()
             .then(op('+').to(add).or(op('-').to(sub)).then(product).repeated())
-            .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
-
-        sum
+            .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)))
     })
 }
 
@@ -125,7 +121,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = Simple<char>
         .map(|fields| fields.into_iter().collect::<HashMap<_, _>>());
 
     let struct_declaration = text::keyword("struct")
-        .ignore_then(ident.clone())
+        .ignore_then(ident)
         .then(fields.clone())
         .map(|(name, fields)| TypeDeclaration::Struct { name, fields });
 

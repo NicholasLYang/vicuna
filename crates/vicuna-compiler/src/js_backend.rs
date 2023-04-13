@@ -46,11 +46,11 @@ impl<T: Write> JsBackend<T> {
                 }
                 writeln!(self.output, "}} else {{")?;
                 for stmt in &else_block.stmts {
-                    self.emit_stmt(&stmt)?;
+                    self.emit_stmt(stmt)?;
                 }
                 if let Some(end_expr) = &else_block.end_expr {
                     write!(self.output, "{} = ", name)?;
-                    self.emit_expr(&end_expr)?;
+                    self.emit_expr(end_expr)?;
                     writeln!(self.output, ";")?;
                 }
                 writeln!(self.output, "}}")?;
@@ -96,7 +96,7 @@ impl<T: Write> JsBackend<T> {
 
                 writeln!(self.output, "}} else {{")?;
                 for stmt in else_block {
-                    self.emit_stmt(&stmt)?;
+                    self.emit_stmt(stmt)?;
                 }
                 writeln!(self.output, "}}")?;
             }
