@@ -11,7 +11,7 @@
 //!  - Borrow checking
 //!
 use crate::ast::{
-    BinaryOp, Expr, Function, Program, Stmt, TypeDeclaration, TypeSig, UnaryOp, Value,
+    BinaryOp, Expr, Function, PostFix, Program, Stmt, TypeDeclaration, TypeSig, UnaryOp, Value,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -27,6 +27,7 @@ pub enum Type {
     Bool,
     Void,
     String,
+    Array(Box<Type>),
     Function {
         param_types: Vec<Type>,
         return_type: Box<Type>,
@@ -42,6 +43,7 @@ impl Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::Void => write!(f, "void"),
             Type::String => write!(f, "string"),
+            Type::Array(ty) => write!(f, "{}[]", ty),
             Type::Function {
                 param_types,
                 return_type,
@@ -60,6 +62,7 @@ impl Display for Type {
     }
 }
 
+#[derive(Debug)]
 struct SymbolTable {
     scopes: Vec<HashMap<Name, Type>>,
     current_scope: usize,
@@ -107,9 +110,14 @@ pub struct TypeChecker {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum TypeError {
     TypeMismatch(Type, Type),
+    FieldsMismatch(HashMap<Name, Type>, HashMap<Name, Option<Type>>),
     UndefinedVariable(Name),
+    UndefinedStruct(Name),
     ArityMismatch(usize, usize),
     NotCallable(Type),
+    NotStruct(Type),
+    NotArray(Type),
+    UndefinedField { struct_name: Name, field_name: Name },
 }
 
 // TODO: Make this some fancy error display
@@ -119,11 +127,25 @@ impl Display for TypeError {
             TypeError::TypeMismatch(expected, actual) => {
                 write!(f, "Expected type {}, got {}", expected, actual)
             }
+            TypeError::FieldsMismatch(expected, actual) => {
+                write!(f, "Expected fields {:?}, got {:?}", expected, actual)
+            }
             TypeError::UndefinedVariable(name) => write!(f, "Undefined variable {}", name),
+            TypeError::UndefinedStruct(name) => write!(f, "Undefined struct {}", name),
             TypeError::ArityMismatch(expected, actual) => {
                 write!(f, "Expected {} arguments, got {}", expected, actual)
             }
             TypeError::NotCallable(ty) => write!(f, "Type {} is not callable", ty),
+            TypeError::NotStruct(ty) => write!(f, "Type {} is not a struct", ty),
+            TypeError::NotArray(ty) => write!(f, "Type {} is not an array", ty),
+            TypeError::UndefinedField {
+                struct_name,
+                field_name,
+            } => write!(
+                f,
+                "Struct {} does not have field {}",
+                struct_name, field_name
+            ),
         }
     }
 }
@@ -254,7 +276,10 @@ impl TypeChecker {
                 self.check_expr(expr)?;
             }
             Stmt::Function(Function {
-                name, params, body, ..
+                name: _,
+                params,
+                body,
+                return_type,
             }) => {
                 self.symbol_table.enter_scope();
 
@@ -264,16 +289,18 @@ impl TypeChecker {
 
                 self.check_block(&body.stmts);
 
-                let ty = if let Some(end_expr) = &body.end_expr {
+                let end_expr_ty = if let Some(end_expr) = &body.end_expr {
                     self.check_expr(end_expr)
                 } else {
                     Some(Type::Void)
                 };
-
                 self.symbol_table.exit_scope();
 
-                if let Some(ty) = ty {
-                    self.symbol_table.insert(name.clone(), ty);
+                let end_expr_ty = end_expr_ty?;
+                let return_ty = return_type.as_ref().into();
+                if end_expr_ty != return_ty {
+                    self.errors
+                        .push(TypeError::TypeMismatch(end_expr_ty, return_ty));
                 }
             }
         }
@@ -334,37 +361,110 @@ impl TypeChecker {
                     None
                 }
             }
-            Expr::Call { callee, calls } => {
-                let mut callee_ty = self.check_expr(callee)?;
-                for args in calls {
-                    if let Type::Function {
-                        param_types,
-                        return_type,
-                    } = callee_ty
-                    {
-                        if args.len() != param_types.len() {
+            Expr::PostFix(callee, PostFix::Args(args)) => {
+                let callee_ty = self.check_expr(callee)?;
+                if let Type::Function {
+                    param_types,
+                    return_type,
+                } = callee_ty
+                {
+                    if args.len() != param_types.len() {
+                        self.errors
+                            .push(TypeError::ArityMismatch(param_types.len(), args.len()));
+                    }
+
+                    for (arg, param_type) in args.iter().zip(param_types) {
+                        let arg_ty = self.check_expr(arg)?;
+                        if arg_ty != param_type {
                             self.errors
-                                .push(TypeError::ArityMismatch(param_types.len(), args.len()));
+                                .push(TypeError::TypeMismatch(param_type.clone(), arg_ty.clone()));
                         }
+                    }
 
-                        for (arg, param_type) in args.iter().zip(param_types) {
-                            let arg_ty = self.check_expr(arg)?;
-                            if arg_ty != param_type {
-                                self.errors.push(TypeError::TypeMismatch(
-                                    param_type.clone(),
-                                    arg_ty.clone(),
-                                ));
-                            }
-                        }
-
-                        callee_ty = *return_type;
+                    Some(*return_type)
+                } else {
+                    self.errors.push(TypeError::NotCallable(callee_ty));
+                    None
+                }
+            }
+            Expr::PostFix(callee, PostFix::Field(field)) => {
+                let callee_ty = self.check_expr(callee)?;
+                if let Type::Named(struct_name) = callee_ty {
+                    let fields = self.named_types.get(&struct_name)?;
+                    if let Some(ty) = fields.get(field) {
+                        Some(ty.clone())
                     } else {
-                        self.errors.push(TypeError::NotCallable(callee_ty));
-                        return None;
+                        self.errors.push(TypeError::UndefinedField {
+                            struct_name: struct_name.clone(),
+                            field_name: field.clone(),
+                        });
+
+                        None
+                    }
+                } else {
+                    self.errors.push(TypeError::NotStruct(callee_ty));
+                    None
+                }
+            }
+            Expr::PostFix(callee, PostFix::Index(index)) => {
+                let callee_ty = self.check_expr(callee)?;
+                let index_ty = self.check_expr(index)?;
+                if index_ty != Type::I32 {
+                    self.errors
+                        .push(TypeError::TypeMismatch(Type::I32, index_ty));
+                }
+
+                if let Type::Array(ty) = callee_ty {
+                    Some(*ty)
+                } else {
+                    self.errors.push(TypeError::NotArray(callee_ty));
+                    None
+                }
+            }
+            Expr::Struct(name, literal_fields) => {
+                let Some(mut struct_type_fields) = self.named_types.get(name).cloned() else {
+                    self.errors.push(TypeError::UndefinedStruct(name.clone()));
+                    return None;
+                };
+
+                if literal_fields.len() != struct_type_fields.len() {
+                    let struct_type_fields = struct_type_fields.clone();
+                    let literal_field_types = literal_fields
+                        .iter()
+                        .map(|(field_name, field_value)| {
+                            let field_ty = self.check_expr(field_value);
+                            (field_name.clone(), field_ty)
+                        })
+                        .collect::<HashMap<_, _>>();
+
+                    self.errors.push(TypeError::FieldsMismatch(
+                        struct_type_fields,
+                        literal_field_types,
+                    ));
+                    return None;
+                }
+
+                for (field_name, expr) in literal_fields.iter() {
+                    let expected_ty =
+                        if let Some(expected_ty) = struct_type_fields.remove(field_name) {
+                            expected_ty
+                        } else {
+                            self.errors.push(TypeError::UndefinedField {
+                                struct_name: name.clone(),
+                                field_name: field_name.clone(),
+                            });
+                            return None;
+                        };
+
+                    let expr_ty = self.check_expr(expr)?;
+
+                    if expr_ty != expected_ty {
+                        self.errors
+                            .push(TypeError::TypeMismatch(expr_ty.clone(), expected_ty));
                     }
                 }
 
-                Some(callee_ty)
+                Some(Type::Named(name.clone()))
             }
         }
     }
@@ -373,7 +473,7 @@ impl TypeChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::ExpressionBlock;
+    use crate::ast::ExprBlock;
 
     #[test]
     fn test_check_expr() {
@@ -410,11 +510,11 @@ mod tests {
                 Stmt::LetIf {
                     name: "z".into(),
                     condition: Expr::Value(Value::Bool(true)),
-                    then_block: ExpressionBlock {
+                    then_block: ExprBlock {
                         stmts: vec![],
                         end_expr: Some(Expr::Variable("x".into())),
                     },
-                    else_block: ExpressionBlock {
+                    else_block: ExprBlock {
                         stmts: vec![],
                         end_expr: Some(Expr::Variable("y".into())),
                     },
@@ -438,11 +538,11 @@ mod tests {
                 Stmt::LetIf {
                     name: "z".into(),
                     condition: Expr::Value(Value::Bool(true)),
-                    then_block: ExpressionBlock {
+                    then_block: ExprBlock {
                         stmts: vec![],
                         end_expr: Some(Expr::Variable("a".into())),
                     },
-                    else_block: ExpressionBlock {
+                    else_block: ExprBlock {
                         stmts: vec![],
                         end_expr: Some(Expr::Variable("b".into())),
                     },
@@ -475,17 +575,14 @@ mod tests {
                     name: "f".into(),
                     params: vec![],
                     return_type: Some(TypeSig::I32),
-                    body: ExpressionBlock {
+                    body: ExprBlock {
                         stmts: vec![],
                         end_expr: Some(Expr::Value(Value::I32(1))),
                     },
                 }),
                 Stmt::Let(
                     "x".into(),
-                    Expr::Call {
-                        callee: Box::new(Expr::Variable("f".into())),
-                        calls: vec![],
-                    },
+                    Expr::PostFix(Box::new(Expr::Variable("f".into())), PostFix::Args(vec![])),
                 ),
             ],
         };
@@ -497,10 +594,7 @@ mod tests {
             type_declarations: vec![],
             statements: vec![Stmt::Let(
                 "x".into(),
-                Expr::Call {
-                    callee: Box::new(Expr::Variable("f".into())),
-                    calls: vec![],
-                },
+                Expr::PostFix(Box::new(Expr::Variable("f".into())), PostFix::Args(vec![])),
             )],
         };
 

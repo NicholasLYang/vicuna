@@ -17,9 +17,6 @@ export class WasmOutput {
   readonly ast: string | undefined;
 /**
 */
-  readonly cst: string | undefined;
-/**
-*/
   readonly errors: string;
 /**
 */

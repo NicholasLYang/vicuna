@@ -44,12 +44,6 @@ function App() {
               </pre>
             </div>
             <div>
-              <h2>CST</h2>
-              <pre className="w-full overflow-auto p-5 rounded bg-white h-[100px]">
-                {output.cst || ""}
-              </pre>
-            </div>
-            <div>
               <h2>AST</h2>
               <pre className="w-full overflow-auto p-5 rounded bg-white h-[100px]">
                 {output.ast || ""}

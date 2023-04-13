@@ -1,4 +1,4 @@
-use crate::ast::{build_ast, Program};
+use crate::ast::Program;
 use crate::js_backend::JsBackend;
 use crate::parser::parse;
 use crate::type_checker::{TypeChecker, TypeError};
@@ -14,11 +14,14 @@ pub struct CompilerOutput {
 }
 
 pub fn compile(source: &str) -> Result<CompilerOutput> {
-    let cst = parse(source)?;
-    debug!("CST: {:?}", cst);
+    let (program, parse_errors) = parse(source);
 
-    let program = build_ast(source, cst)?;
-    debug!("AST: {:?}", program);
+    for error in parse_errors {
+        println!("{}", error);
+    }
+
+    let program = program.ok_or_else(|| anyhow::anyhow!("Fatal parse error"))?;
+    debug!("AST: {:#?}", program);
 
     let type_checker = TypeChecker::new();
     let type_errors = type_checker.check(&program);

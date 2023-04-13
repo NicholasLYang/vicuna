@@ -10,10 +10,9 @@ wasm-opt = false
 
 [dependencies]
 anyhow = { workspace = true }
+chumsky = { version = "0.9.2", default-features = false, features = ["std"] }
 serde = { version = "1.0.147", features = ["derive"] }
 tracing = "0.1.37"
-tree-sitter-c2rust = "0.20.9"
-
 
 [build-dependencies]
 build-target = "0.4.0"
