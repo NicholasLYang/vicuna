@@ -52,6 +52,20 @@ pub enum Stmt {
         else_block: Vec<Stmt>,
     },
     Return(Option<Expr>),
+    Import {
+        ty: ImportType,
+        default_import: Option<String>,
+        named_imports: Vec<String>,
+        path: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum ImportType {
+    // An import from another Vicuna module
+    Internal,
+    // An import from a JavaScript module
+    External,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -71,6 +85,11 @@ pub enum Expr {
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
     Struct(String, HashMap<String, Expr>),
+    Enum {
+        enum_name: String,
+        variant_name: String,
+        fields: HashMap<String, Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

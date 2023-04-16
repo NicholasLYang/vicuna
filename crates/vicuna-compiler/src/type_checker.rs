@@ -11,7 +11,8 @@
 //!  - Borrow checking
 //!
 use crate::ast::{
-    BinaryOp, Expr, Function, PostFix, Program, Stmt, TypeDeclaration, TypeSig, UnaryOp, Value,
+    BinaryOp, Expr, Function, ImportType, PostFix, Program, Stmt, TypeDeclaration, TypeSig,
+    UnaryOp, Value,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -28,6 +29,8 @@ pub enum Type {
     Bool,
     Void,
     String,
+    // A type for JS values
+    Js,
     Array(Box<Type>),
     Function {
         param_types: Vec<Type>,
@@ -44,6 +47,7 @@ impl Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::Void => write!(f, "void"),
             Type::String => write!(f, "string"),
+            Type::Js => write!(f, "<js value>"),
             Type::Array(ty) => write!(f, "{}[]", ty),
             Type::Function {
                 param_types,
@@ -104,7 +108,8 @@ impl SymbolTable {
 
 pub struct TypeChecker {
     symbol_table: SymbolTable,
-    named_types: HashMap<String, HashMap<Name, Type>>,
+    defined_structs: HashMap<Name, HashMap<Name, Type>>,
+    defined_enums: HashMap<String, HashMap<String, HashMap<String, Type>>>,
     return_type: Option<Type>,
     pub(crate) errors: Vec<TypeError>,
 }
@@ -121,6 +126,7 @@ pub enum TypeError {
     NotArray(Type),
     ReturnOutsideFunction,
     UndefinedField { struct_name: Name, field_name: Name },
+    UndefinedVariant { enum_name: Name, variant_name: Name },
 }
 
 // TODO: Make this some fancy error display
@@ -149,6 +155,14 @@ impl Display for TypeError {
                 f,
                 "Struct {} does not have field {}",
                 struct_name, field_name
+            ),
+            TypeError::UndefinedVariant {
+                enum_name,
+                variant_name,
+            } => write!(
+                f,
+                "Enum {} does not have variant {}",
+                enum_name, variant_name
             ),
         }
     }
@@ -179,7 +193,8 @@ impl TypeChecker {
     pub fn new() -> Self {
         Self {
             symbol_table: SymbolTable::new(),
-            named_types: HashMap::new(),
+            defined_structs: HashMap::new(),
+            defined_enums: HashMap::new(),
             return_type: None,
             errors: Vec::new(),
         }
@@ -194,15 +209,33 @@ impl TypeChecker {
 
     fn add_type_declarations(&mut self, type_declarations: &[TypeDeclaration]) {
         for decl in type_declarations {
-            #[allow(irrefutable_let_patterns)]
-            if let TypeDeclaration::Struct { name, fields } = decl {
-                self.named_types.insert(
-                    name.clone(),
-                    fields
-                        .iter()
-                        .map(|(name, ty)| (name.clone(), ty.into()))
-                        .collect(),
-                );
+            match decl {
+                TypeDeclaration::Struct { name, fields } => {
+                    self.defined_structs.insert(
+                        name.clone(),
+                        fields
+                            .iter()
+                            .map(|(name, ty)| (name.clone(), ty.into()))
+                            .collect(),
+                    );
+                }
+                TypeDeclaration::Enum { name, variants } => {
+                    self.defined_enums.insert(
+                        name.clone(),
+                        variants
+                            .iter()
+                            .map(|(name, fields)| {
+                                (
+                                    name.clone(),
+                                    fields
+                                        .iter()
+                                        .map(|(name, ty)| (name.clone(), ty.into()))
+                                        .collect(),
+                                )
+                            })
+                            .collect(),
+                    );
+                }
             }
         }
     }
@@ -349,6 +382,21 @@ impl TypeChecker {
                     self.errors.push(TypeError::ReturnOutsideFunction);
                 }
             }
+            Stmt::Import {
+                ty: ImportType::External,
+                default_import,
+                named_imports,
+                path: _,
+            } => {
+                if let Some(default_import) = default_import {
+                    self.symbol_table.insert(default_import.clone(), Type::Js);
+                }
+
+                for name in named_imports {
+                    self.symbol_table.insert(name.clone(), Type::Js);
+                }
+            }
+            Stmt::Import { .. } => todo!("internal imports not implemented yet"),
         }
 
         Some(())
@@ -441,7 +489,7 @@ impl TypeChecker {
             Expr::PostFix(callee, PostFix::Field(field)) => {
                 let callee_ty = self.check_expr(callee)?;
                 if let Type::Named(struct_name) = callee_ty {
-                    let fields = self.named_types.get(&struct_name)?;
+                    let fields = self.defined_structs.get(&struct_name)?;
                     if let Some(ty) = fields.get(field) {
                         Some(ty.clone())
                     } else {
@@ -473,51 +521,77 @@ impl TypeChecker {
                 }
             }
             Expr::Struct(name, literal_fields) => {
-                let Some(mut struct_type_fields) = self.named_types.get(name).cloned() else {
+                let Some(struct_type_fields) = self.defined_structs.get(name).cloned() else {
                     self.errors.push(TypeError::UndefinedStruct(name.clone()));
                     return None;
                 };
 
-                if literal_fields.len() != struct_type_fields.len() {
-                    let struct_type_fields = struct_type_fields.clone();
-                    let literal_field_types = literal_fields
-                        .iter()
-                        .map(|(field_name, field_value)| {
-                            let field_ty = self.check_expr(field_value);
-                            (field_name.clone(), field_ty)
-                        })
-                        .collect::<HashMap<_, _>>();
-
-                    self.errors.push(TypeError::FieldsMismatch(
-                        struct_type_fields,
-                        literal_field_types,
-                    ));
-                    return None;
-                }
-
-                for (field_name, expr) in literal_fields.iter() {
-                    let expected_ty =
-                        if let Some(expected_ty) = struct_type_fields.remove(field_name) {
-                            expected_ty
-                        } else {
-                            self.errors.push(TypeError::UndefinedField {
-                                struct_name: name.clone(),
-                                field_name: field_name.clone(),
-                            });
-                            return None;
-                        };
-
-                    let expr_ty = self.check_expr(expr)?;
-
-                    if expr_ty != expected_ty {
-                        self.errors
-                            .push(TypeError::TypeMismatch(expr_ty.clone(), expected_ty));
-                    }
-                }
+                self.compare_fields(literal_fields, struct_type_fields)?;
 
                 Some(Type::Named(name.clone()))
             }
+            Expr::Enum {
+                enum_name,
+                variant_name,
+                fields,
+            } => {
+                let Some(variant_fields) = self.defined_enums.get(enum_name).and_then(|enum_variants| enum_variants.get(variant_name)).cloned() else {
+                    self.errors.push(TypeError::UndefinedVariant {
+                        enum_name: enum_name.clone(),
+                        variant_name: variant_name.clone(),
+                    });
+                    return None;
+                };
+
+                self.compare_fields(fields, variant_fields)?;
+
+                Some(Type::Named(variant_name.clone()))
+            }
         }
+    }
+
+    fn compare_fields(
+        &mut self,
+        literal_fields: &HashMap<String, Expr>,
+        mut struct_type_fields: HashMap<String, Type>,
+    ) -> Option<()> {
+        if literal_fields.len() != struct_type_fields.len() {
+            let struct_type_fields = struct_type_fields.clone();
+            let literal_field_types = literal_fields
+                .iter()
+                .map(|(field_name, field_value)| {
+                    let field_ty = self.check_expr(field_value);
+                    (field_name.clone(), field_ty)
+                })
+                .collect::<HashMap<_, _>>();
+
+            self.errors.push(TypeError::FieldsMismatch(
+                struct_type_fields,
+                literal_field_types,
+            ));
+            return None;
+        }
+
+        for (field_name, expr) in literal_fields.iter() {
+            let expected_ty = if let Some(expected_ty) = struct_type_fields.remove(field_name) {
+                expected_ty
+            } else {
+                self.errors.push(TypeError::UndefinedField {
+                    struct_name: field_name.clone(),
+                    field_name: field_name.clone(),
+                });
+                return None;
+            };
+
+            let expr_ty = self.check_expr(expr)?;
+
+            if expr_ty != expected_ty {
+                self.errors
+                    .push(TypeError::TypeMismatch(expr_ty.clone(), expected_ty));
+            }
+        }
+
+        Some(())
     }
 }
 

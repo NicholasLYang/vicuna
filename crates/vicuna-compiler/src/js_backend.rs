@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Function, PostFix, Program, Stmt, UnaryOp, Value};
+use crate::ast::{BinaryOp, Expr, Function, ImportType, PostFix, Program, Stmt, UnaryOp, Value};
 use anyhow::Result;
 use std::io::Write;
 
@@ -107,6 +107,36 @@ impl<T: Write> JsBackend<T> {
                 }
                 self.output.write_all(b";\n")?;
             }
+            Stmt::Import {
+                ty: ImportType::External,
+                default_import,
+                named_imports,
+                path,
+            } => {
+                self.output.write_all(b"import ")?;
+                if let Some(default_import) = default_import {
+                    self.output.write_all(default_import.as_bytes())?;
+                }
+                if !named_imports.is_empty() {
+                    if default_import.is_some() {
+                        self.output.write_all(b", ")?;
+                    }
+
+                    self.output.write_all(b"{ ")?;
+                    for (idx, name) in named_imports.iter().enumerate() {
+                        self.output.write_all(name.as_bytes())?;
+                        if idx != named_imports.len() - 1 {
+                            self.output.write_all(b", ")?;
+                        }
+                    }
+                    self.output.write_all(b" }")?;
+                }
+
+                self.output.write_all(b" from \"")?;
+                self.output.write_all(path.as_bytes())?;
+                self.output.write_all(b"\";\n")?;
+            }
+            Stmt::Import { .. } => todo!("internal imports not implemented yet"),
         }
         Ok(())
     }
@@ -169,6 +199,25 @@ impl<T: Write> JsBackend<T> {
             }
             Expr::Struct(_, fields) => {
                 self.output.write_all(b"{")?;
+                for (i, (name, value)) in fields.iter().enumerate() {
+                    self.output.write_all(name.as_bytes())?;
+                    self.output.write_all(b": ")?;
+                    self.emit_expr(value)?;
+                    if i < fields.len() - 1 {
+                        self.output.write_all(b", ")?;
+                    }
+                }
+                self.output.write_all(b"}")?;
+            }
+            Expr::Enum {
+                variant_name,
+                fields,
+                ..
+            } => {
+                self.output.write_all(b"{")?;
+                self.output.write_all(b" \"__type__\": \"")?;
+                self.output.write_all(variant_name.as_bytes())?;
+                self.output.write_all(b"\", ")?;
                 for (i, (name, value)) in fields.iter().enumerate() {
                     self.output.write_all(name.as_bytes())?;
                     self.output.write_all(b": ")?;

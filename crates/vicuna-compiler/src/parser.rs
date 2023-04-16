@@ -1,9 +1,17 @@
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, Function, PostFix, Program, Stmt, TypeDeclaration, TypeSig, UnaryOp,
-    Value,
+    BinaryOp, Expr, ExprBlock, Function, ImportType, PostFix, Program, Stmt, TypeDeclaration,
+    TypeSig, UnaryOp, Value,
 };
 use chumsky::prelude::*;
 use std::collections::HashMap;
+
+fn string() -> impl Parser<char, String, Error = Simple<char>> + Clone {
+    let string_char = none_of('"').or(just('\\').ignore_then(any()));
+    just('"')
+        .ignore_then(string_char.repeated())
+        .then_ignore(just('"'))
+        .map(|chars| chars.into_iter().collect())
+}
 
 pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
     let ident = text::ident().padded();
@@ -22,20 +30,27 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .or(text::keyword("false").to(false))
             .map(|b| Expr::Value(Value::Bool(b)));
 
-        let string = just("\"")
-            .ignore_then(none_of('"').repeated())
-            .then_ignore(just("\""))
-            .map(|chars| Expr::Value(Value::String(chars.into_iter().collect())));
+        let string = string().map(|s| Expr::Value(Value::String(s)));
+
+        let fields = ident
+            .then_ignore(just(':'))
+            .then(expr.clone())
+            .separated_by(just(','))
+            .delimited_by(just('{'), just('}'));
+
+        let enum_literal = ident
+            .clone()
+            .then_ignore(just("::"))
+            .then(ident)
+            .then(fields.clone())
+            .map(|((enum_name, variant_name), v)| Expr::Enum {
+                enum_name,
+                variant_name,
+                fields: v.into_iter().collect(),
+            });
 
         let struct_literal = ident
-            .then_ignore(just('{'))
-            .then(
-                ident
-                    .then_ignore(just(':'))
-                    .then(expr.clone())
-                    .separated_by(just(',')),
-            )
-            .then_ignore(just('}'))
+            .then(fields)
             .map(|(name, fields)| Expr::Struct(name, fields.into_iter().collect()));
 
         let atom = float
@@ -43,6 +58,7 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .or(expr.clone().delimited_by(just('('), just(')')))
             .or(bool)
             .or(string)
+            .or(enum_literal)
             .or(struct_literal)
             .or(ident.map(Expr::Variable))
             .padded();
@@ -121,7 +137,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = Simple<char>
         .map(|fields| fields.into_iter().collect::<HashMap<_, _>>());
 
     let struct_declaration = text::keyword("struct")
-        .ignore_then(ident)
+        .ignore_then(ident.clone())
         .then(fields.clone())
         .map(|(name, fields)| TypeDeclaration::Struct { name, fields });
 
@@ -225,6 +241,34 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
                 else_block,
             });
 
+        let import_stmt = text::keyword("import")
+            .ignore_then(
+                text::keyword("extern")
+                    .to(ImportType::External)
+                    .or(empty().to(ImportType::Internal)),
+            )
+            .then(ident.clone().map(Some).or(empty().to(None)))
+            .then_ignore(just(',').to(()).or(empty()))
+            .then(
+                ident
+                    .clone()
+                    .separated_by(just(','))
+                    .allow_trailing()
+                    .delimited_by(just('{'), just('}'))
+                    .or(empty().to(Vec::new())),
+            )
+            .then_ignore(text::keyword("from"))
+            .then(string())
+            .then_ignore(just(';'))
+            .map(
+                |(((import_type, default_import), named_imports), module)| Stmt::Import {
+                    ty: import_type,
+                    default_import,
+                    named_imports,
+                    path: module,
+                },
+            );
+
         let return_stmt = text::keyword("return")
             .ignore_then(expr().padded().map(Some).or(empty().to(None)))
             .then_ignore(just(';'))
@@ -235,6 +279,7 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
             .or(let_decl)
             .or(if_stmt)
             .or(return_stmt)
+            .or(import_stmt)
             .or(expr().then_ignore(just(';')).map(Stmt::Expr))
             .padded()
     })
@@ -328,6 +373,20 @@ mod tests {
                 .into_iter()
                 .collect()
             ))
+        );
+
+        assert_eq!(
+            expr().parse("Foo::Bar { a: 10, b: 20 }"),
+            Ok(Expr::Enum {
+                enum_name: "Foo".to_string(),
+                variant_name: "Bar".to_string(),
+                fields: vec![
+                    ("a".to_string(), Expr::Value(Value::I32(10))),
+                    ("b".to_string(), Expr::Value(Value::I32(20))),
+                ]
+                .into_iter()
+                .collect()
+            })
         );
     }
 
@@ -588,6 +647,49 @@ mod tests {
                 condition: Expr::Variable("b".to_string()),
                 then_block: vec![Stmt::Expr(Expr::Value(Value::I32(10)))],
                 else_block: vec![],
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_import_statement() {
+        assert_eq!(
+            stmt().parse(r#"import foo from "./bar";"#),
+            Ok(Stmt::Import {
+                ty: ImportType::Internal,
+                default_import: Some("foo".to_string()),
+                named_imports: Vec::new(),
+                path: "./bar".to_string(),
+            })
+        );
+
+        assert_eq!(
+            stmt().parse(r#"import { foo, bar } from "./baz";"#),
+            Ok(Stmt::Import {
+                ty: ImportType::Internal,
+                default_import: None,
+                named_imports: vec!["foo".to_string(), "bar".to_string()],
+                path: "./baz".to_string(),
+            })
+        );
+
+        assert_eq!(
+            stmt().parse(r#"import qux, { foo, bar } from "./baz";"#),
+            Ok(Stmt::Import {
+                ty: ImportType::Internal,
+                default_import: Some("qux".to_string()),
+                named_imports: vec!["foo".to_string(), "bar".to_string()],
+                path: "./baz".to_string(),
+            })
+        );
+
+        assert_eq!(
+            stmt().parse(r#"import extern { foo, bar } from "https://example.com/baz";"#),
+            Ok(Stmt::Import {
+                ty: ImportType::External,
+                default_import: None,
+                named_imports: vec!["foo".to_string(), "bar".to_string()],
+                path: "https://example.com/baz".to_string(),
             })
         );
     }

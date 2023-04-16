@@ -1,0 +1,13 @@
+enum Dessert {
+  IceCream {
+     flavor: string
+  },
+  Cake {
+     flavor: string,
+     icing: string
+  }
+}
+
+fn main() {
+  let dessert = Dessert::IceCream { flavor: "chocolate" };
+}
