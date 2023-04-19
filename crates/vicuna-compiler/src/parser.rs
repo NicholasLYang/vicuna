@@ -269,6 +269,8 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
                 },
             );
 
+        let type_declaration = type_declaration().map(Stmt::Type);
+
         let return_stmt = text::keyword("return")
             .ignore_then(expr().padded().map(Some).or(empty().to(None)))
             .then_ignore(just(';'))
@@ -280,42 +282,21 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
             .or(if_stmt)
             .or(return_stmt)
             .or(import_stmt)
+            .or(type_declaration)
             .or(expr().then_ignore(just(';')).map(Stmt::Expr))
             .padded()
     })
 }
 
-enum ParserOutput {
-    Stmt(Stmt),
-    TypeDeclaration(TypeDeclaration),
-}
-
-fn parser() -> impl Parser<char, Vec<ParserOutput>, Error = Simple<char>> {
-    stmt()
-        .map(ParserOutput::Stmt)
-        .or(type_declaration().map(ParserOutput::TypeDeclaration))
-        .repeated()
-        .then_ignore(end())
+fn parser() -> impl Parser<char, Vec<Stmt>, Error = Simple<char>> {
+    stmt().repeated().then_ignore(end())
 }
 
 pub fn parse(source: &str) -> (Option<Program>, Vec<Simple<char>>) {
     let (output, errors) = parser().parse_recovery(source);
-    let output = output.map(|output| {
-        let mut statements = vec![];
-        let mut type_declarations = vec![];
-        for item in output {
-            match item {
-                ParserOutput::Stmt(stmt) => statements.push(stmt),
-                ParserOutput::TypeDeclaration(decl) => type_declarations.push(decl),
-            }
-        }
-        Program {
-            statements,
-            type_declarations,
-        }
-    });
+    let program = output.map(|statements| Program { statements });
 
-    (output, errors)
+    (program, errors)
 }
 
 #[cfg(test)]

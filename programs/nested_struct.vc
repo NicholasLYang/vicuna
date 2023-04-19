@@ -1,0 +1,11 @@
+fn foo() -> i32 {
+  struct Bar {
+    a: i32,
+  }
+
+  let b = Bar {
+    a: 10 + 2
+  };
+
+  b.a
+}

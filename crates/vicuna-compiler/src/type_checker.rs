@@ -68,12 +68,12 @@ impl Display for Type {
 }
 
 #[derive(Debug)]
-struct SymbolTable {
-    scopes: Vec<HashMap<Name, Type>>,
+struct SymbolTable<T> {
+    scopes: Vec<HashMap<Name, T>>,
     current_scope: usize,
 }
 
-impl SymbolTable {
+impl<T> SymbolTable<T> {
     fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
@@ -91,11 +91,11 @@ impl SymbolTable {
         self.scopes.pop();
     }
 
-    fn insert(&mut self, name: Name, ty: Type) {
-        self.scopes[self.current_scope].insert(name, ty);
+    fn insert(&mut self, name: Name, value: T) {
+        self.scopes[self.current_scope].insert(name, value);
     }
 
-    fn lookup(&self, name: &Name) -> Option<&Type> {
+    fn lookup(&self, name: &Name) -> Option<&T> {
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.get(name) {
                 return Some(ty);
@@ -107,9 +107,9 @@ impl SymbolTable {
 }
 
 pub struct TypeChecker {
-    symbol_table: SymbolTable,
-    defined_structs: HashMap<Name, HashMap<Name, Type>>,
-    defined_enums: HashMap<String, HashMap<String, HashMap<String, Type>>>,
+    symbol_table: SymbolTable<Type>,
+    defined_structs: SymbolTable<HashMap<Name, Type>>,
+    defined_enums: SymbolTable<HashMap<Name, HashMap<Name, Type>>>,
     return_type: Option<Type>,
     pub(crate) errors: Vec<TypeError>,
 }
@@ -193,49 +193,58 @@ impl TypeChecker {
     pub fn new() -> Self {
         Self {
             symbol_table: SymbolTable::new(),
-            defined_structs: HashMap::new(),
-            defined_enums: HashMap::new(),
+            defined_structs: SymbolTable::new(),
+            defined_enums: SymbolTable::new(),
             return_type: None,
             errors: Vec::new(),
         }
     }
 
+    fn enter_scope(&mut self) {
+        self.symbol_table.enter_scope();
+        self.defined_enums.enter_scope();
+        self.defined_structs.enter_scope();
+    }
+
+    fn exit_scope(&mut self) {
+        self.symbol_table.exit_scope();
+        self.defined_enums.exit_scope();
+        self.defined_structs.exit_scope();
+    }
+
     pub fn check(mut self, program: &Program) -> Vec<TypeError> {
-        self.add_type_declarations(&program.type_declarations);
         self.check_block(&program.statements);
 
         self.errors
     }
 
-    fn add_type_declarations(&mut self, type_declarations: &[TypeDeclaration]) {
-        for decl in type_declarations {
-            match decl {
-                TypeDeclaration::Struct { name, fields } => {
-                    self.defined_structs.insert(
-                        name.clone(),
-                        fields
-                            .iter()
-                            .map(|(name, ty)| (name.clone(), ty.into()))
-                            .collect(),
-                    );
-                }
-                TypeDeclaration::Enum { name, variants } => {
-                    self.defined_enums.insert(
-                        name.clone(),
-                        variants
-                            .iter()
-                            .map(|(name, fields)| {
-                                (
-                                    name.clone(),
-                                    fields
-                                        .iter()
-                                        .map(|(name, ty)| (name.clone(), ty.into()))
-                                        .collect(),
-                                )
-                            })
-                            .collect(),
-                    );
-                }
+    fn add_type_declaration(&mut self, type_declaration: &TypeDeclaration) {
+        match type_declaration {
+            TypeDeclaration::Struct { name, fields } => {
+                self.defined_structs.insert(
+                    name.clone(),
+                    fields
+                        .iter()
+                        .map(|(name, ty)| (name.clone(), ty.into()))
+                        .collect(),
+                );
+            }
+            TypeDeclaration::Enum { name, variants } => {
+                self.defined_enums.insert(
+                    name.clone(),
+                    variants
+                        .iter()
+                        .map(|(name, fields)| {
+                            (
+                                name.clone(),
+                                fields
+                                    .iter()
+                                    .map(|(name, ty)| (name.clone(), ty.into()))
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
+                );
             }
         }
     }
@@ -279,7 +288,7 @@ impl TypeChecker {
                         .push(TypeError::TypeMismatch(Type::Bool, condition_ty));
                 }
 
-                self.symbol_table.enter_scope();
+                self.enter_scope();
 
                 self.check_block(&then_block.stmts);
 
@@ -289,8 +298,8 @@ impl TypeChecker {
                     Some(Type::Void)
                 };
 
-                self.symbol_table.exit_scope();
-                self.symbol_table.enter_scope();
+                self.exit_scope();
+                self.enter_scope();
                 self.check_block(&else_block.stmts);
 
                 let else_ty = if let Some(end_expr) = &else_block.end_expr {
@@ -319,7 +328,7 @@ impl TypeChecker {
                 body,
                 return_type,
             }) => {
-                self.symbol_table.enter_scope();
+                self.enter_scope();
 
                 for (name, ty) in params {
                     self.symbol_table.insert(name.clone(), ty.into());
@@ -358,13 +367,13 @@ impl TypeChecker {
                         .push(TypeError::TypeMismatch(Type::Bool, condition_ty));
                 }
 
-                self.symbol_table.enter_scope();
+                self.enter_scope();
                 self.check_block(then_block);
-                self.symbol_table.exit_scope();
+                self.exit_scope();
 
-                self.symbol_table.enter_scope();
+                self.enter_scope();
                 self.check_block(else_block);
-                self.symbol_table.exit_scope();
+                self.exit_scope();
             }
             Stmt::Return(expr) => {
                 let ty = if let Some(expr) = expr {
@@ -395,6 +404,9 @@ impl TypeChecker {
                 for name in named_imports {
                     self.symbol_table.insert(name.clone(), Type::Js);
                 }
+            }
+            Stmt::Type(decl) => {
+                self.add_type_declaration(decl);
             }
             Stmt::Import { .. } => todo!("internal imports not implemented yet"),
         }
@@ -489,7 +501,7 @@ impl TypeChecker {
             Expr::PostFix(callee, PostFix::Field(field)) => {
                 let callee_ty = self.check_expr(callee)?;
                 if let Type::Named(struct_name) = callee_ty {
-                    let fields = self.defined_structs.get(&struct_name)?;
+                    let fields = self.defined_structs.lookup(&struct_name)?;
                     if let Some(ty) = fields.get(field) {
                         Some(ty.clone())
                     } else {
@@ -521,7 +533,7 @@ impl TypeChecker {
                 }
             }
             Expr::Struct(name, literal_fields) => {
-                let Some(struct_type_fields) = self.defined_structs.get(name).cloned() else {
+                let Some(struct_type_fields) = self.defined_structs.lookup(name).cloned() else {
                     self.errors.push(TypeError::UndefinedStruct(name.clone()));
                     return None;
                 };
@@ -535,7 +547,7 @@ impl TypeChecker {
                 variant_name,
                 fields,
             } => {
-                let Some(variant_fields) = self.defined_enums.get(enum_name).and_then(|enum_variants| enum_variants.get(variant_name)).cloned() else {
+                let Some(variant_fields) = self.defined_enums.lookup(enum_name).and_then(|enum_variants| enum_variants.get(variant_name)).cloned() else {
                     self.errors.push(TypeError::UndefinedVariant {
                         enum_name: enum_name.clone(),
                         variant_name: variant_name.clone(),

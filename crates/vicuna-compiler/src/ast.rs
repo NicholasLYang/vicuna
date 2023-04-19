@@ -3,7 +3,6 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct Program {
-    pub type_declarations: Vec<TypeDeclaration>,
     pub statements: Vec<Stmt>,
 }
 
@@ -58,6 +57,7 @@ pub enum Stmt {
         named_imports: Vec<String>,
         path: String,
     },
+    Type(TypeDeclaration),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

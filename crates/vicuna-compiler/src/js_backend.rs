@@ -136,6 +136,8 @@ impl<T: Write> JsBackend<T> {
                 self.output.write_all(path.as_bytes())?;
                 self.output.write_all(b"\";\n")?;
             }
+            // TODO: Add TypeScript type generation
+            Stmt::Type(_) => {}
             Stmt::Import { .. } => todo!("internal imports not implemented yet"),
         }
         Ok(())
