@@ -1,5 +1,5 @@
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, Function, ImportType, PostFix, Program, Stmt, TypeDeclaration,
+    BinaryOp, Expr, ExprBlock, Function, ImportType, PostFix, Program, Span, Stmt, TypeDeclaration,
     TypeSig, UnaryOp, Value,
 };
 use chumsky::prelude::*;
@@ -13,45 +13,62 @@ fn string() -> impl Parser<char, String, Error = Simple<char>> + Clone {
         .map(|chars| chars.into_iter().collect())
 }
 
-pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
+pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = Simple<char>> + Clone {
     let ident = text::ident().padded();
     recursive(|expr| {
         let int = text::int(10)
-            .map(|s: String| Expr::Value(Value::I32(s.parse().unwrap())))
+            .map_with_span(|s: String, span| {
+                Span(Expr::Value(Value::I32(s.parse().unwrap())), span)
+            })
             .padded();
 
         let float = text::int(10)
             .then_ignore(just("."))
             .then(text::int(10))
-            .map(|(l, r)| Expr::Value(Value::F32(format!("{}.{}", l, r).parse().unwrap())));
+            .map_with_span(|(l, r), span| {
+                Span(
+                    Expr::Value(Value::F32(format!("{}.{}", l, r).parse().unwrap())),
+                    span,
+                )
+            });
 
         let bool = text::keyword("true")
             .to(true)
             .or(text::keyword("false").to(false))
-            .map(|b| Expr::Value(Value::Bool(b)));
+            .map_with_span(|b, span| Span(Expr::Value(Value::Bool(b)), span));
 
-        let string = string().map(|s| Expr::Value(Value::String(s)));
+        let string = string().map_with_span(|s, span| Span(Expr::Value(Value::String(s)), span));
 
         let fields = ident
+            .map_with_span(|s, span| Span(s, span))
             .then_ignore(just(':'))
-            .then(expr.clone())
+            .then(expr.clone().map_with_span(|e, span| Span(e, span)))
             .separated_by(just(','))
             .delimited_by(just('{'), just('}'));
 
         let enum_literal = ident
             .clone()
+            .map_with_span(|s, span| Span(s, span))
             .then_ignore(just("::"))
-            .then(ident)
+            .then(ident.map_with_span(|s, span| Span(s, span)))
             .then(fields.clone())
-            .map(|((enum_name, variant_name), v)| Expr::Enum {
-                enum_name,
-                variant_name,
-                fields: v.into_iter().collect(),
+            .map_with_span(|((enum_name, variant_name), v), span| {
+                Span(
+                    Expr::Enum {
+                        enum_name,
+                        variant_name,
+                        fields: v.into_iter().collect(),
+                    },
+                    span,
+                )
             });
 
         let struct_literal = ident
+            .map_with_span(|i, span| Span(i, span))
             .then(fields)
-            .map(|(name, fields)| Expr::Struct(name, fields.into_iter().collect()));
+            .map_with_span(|(name, fields), span| {
+                Span(Expr::Struct(name, fields.into_iter().collect()), span)
+            });
 
         let atom = float
             .or(int)
@@ -60,28 +77,39 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .or(string)
             .or(enum_literal)
             .or(struct_literal)
-            .or(ident.map(Expr::Variable))
+            .or(ident.map_with_span(|i, span| Span(Expr::Variable(i), span)))
             .padded();
 
         let args = expr
             .clone()
+            .map_with_span(|e, span| Span(e, span))
             .separated_by(just(','))
             .allow_trailing()
             .delimited_by(just('('), just(')'))
-            .map(PostFix::Args);
+            .map_with_span(|args, span| Span(PostFix::Args(args), span));
 
-        let field = just('.').ignore_then(ident).map(PostFix::Field);
+        let field = just('.')
+            .ignore_then(ident.map_with_span(|e, span| Span(e, span)))
+            .map_with_span(|field, span| Span(PostFix::Field(field), span));
 
         let index = just('[')
-            .ignore_then(expr.clone())
+            .ignore_then(expr.clone().map_with_span(|e, span| Span(e, span)))
             .then_ignore(just(']'))
-            .map(Box::new)
-            .map(PostFix::Index);
+            .map_with_span(|index, span| Span(PostFix::Index(Box::new(index)), span));
 
         let call = atom
             .clone()
-            .then(args.or(field).or(index).repeated())
-            .foldl(|callee, post_fix| Expr::PostFix(Box::new(callee), post_fix));
+            .map_with_span(|e, span| Span(e, span))
+            .then(
+                args.or(field)
+                    .or(index)
+                    .repeated()
+                    .map_with_span(|e, span| Span(e, span)),
+            )
+            .foldl(|callee, post_fix| {
+                let span = (callee.1.start())..(post_fix.1.end());
+                Span(Expr::PostFix(Box::new(callee), post_fix), span)
+            });
 
         let op = |c| just(c).padded();
 
@@ -92,31 +120,41 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .then(call.or(atom))
             .foldr(|op, rhs| Expr::Unary(op, Box::new(rhs)));
 
-        let div: fn(_, _) -> _ = |lhs, rhs| Expr::Binary(BinaryOp::Divide, lhs, rhs);
-        let mul: fn(_, _) -> _ = |lhs, rhs| Expr::Binary(BinaryOp::Multiply, lhs, rhs);
-
         let product = unary
             .clone()
-            .then(op('*').to(mul).or(op('/').to(div)).then(unary).repeated())
-            .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
-
-        let add: fn(_, _) -> _ = |lhs, rhs| Expr::Binary(BinaryOp::Add, lhs, rhs);
-        let sub: fn(_, _) -> _ = |lhs, rhs| Expr::Binary(BinaryOp::Subtract, lhs, rhs);
+            .then(
+                op('*')
+                    .map_with_span(|_, span| Span(BinaryOp::Multiply, span))
+                    .or(op('/').map_with_span(|_, span| Span(BinaryOp::Divide, span)))
+                    .then(unary)
+                    .repeated(),
+            )
+            .foldl(|lhs, (op, rhs)| Expr::Binary(op, Box::new(lhs), Box::new(rhs)));
 
         product
             .clone()
-            .then(op('+').to(add).or(op('-').to(sub)).then(product).repeated())
-            .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)))
+            .then(
+                op('+')
+                    .map_with_span(|_, span| Span(BinaryOp::Add, span))
+                    .or(op('-').map_with_span(|_, span| Span(BinaryOp::Subtract, span)))
+                    .then(product)
+                    .repeated(),
+            )
+            .foldl(|lhs, (op, rhs)| Expr::Binary(op, Box::new(lhs), Box::new(rhs)))
     })
 }
 
-fn type_signature() -> impl Parser<char, TypeSig, Error = Simple<char>> + Clone {
-    ident().map(|id| match id.as_str() {
-        "i32" => TypeSig::I32,
-        "f32" => TypeSig::F32,
-        "string" => TypeSig::String,
-        "bool" => TypeSig::Bool,
-        _ => TypeSig::Named(id),
+fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = Simple<char>> + Clone {
+    ident().map_with_span(|id, span| {
+        let sig = match id.as_str() {
+            "i32" => TypeSig::I32,
+            "f32" => TypeSig::F32,
+            "string" => TypeSig::String,
+            "bool" => TypeSig::Bool,
+            _ => TypeSig::Named(id),
+        };
+
+        Span(sig, span)
     })
 }
 
@@ -137,7 +175,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = Simple<char>
         .map(|fields| fields.into_iter().collect::<HashMap<_, _>>());
 
     let struct_declaration = text::keyword("struct")
-        .ignore_then(ident.clone())
+        .ignore_then(ident.clone().map_with_span(|i, span| Span(i, span)))
         .then(fields.clone())
         .map(|(name, fields)| TypeDeclaration::Struct { name, fields });
 
@@ -159,7 +197,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = Simple<char>
     enum_declaration.or(struct_declaration)
 }
 
-fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
+fn stmt() -> impl Parser<char, Span<Stmt>, Error = Simple<char>> {
     recursive(|stmt| {
         let ident = ident();
 
@@ -172,6 +210,7 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
             .padded();
 
         let function_parameters = ident
+            .map_with_span(|id, span| Span(id, span))
             .then_ignore(just(':'))
             .then(type_signature())
             .padded()
@@ -187,42 +226,56 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
         let optional_return_type = return_type.or(empty().to(None));
 
         let function_decl = text::keyword("fn")
-            .ignore_then(ident)
+            .ignore_then(ident.map_with_span(|id, span| Span(id, span)))
             .then(function_parameters)
             .then(optional_return_type)
-            .then(expr_block.clone())
-            .map(|(((name, params), return_type), body)| {
-                Stmt::Function(Function {
-                    name,
-                    params,
-                    return_type,
-                    body,
-                })
+            .then(
+                expr_block
+                    .clone()
+                    .map_with_span(|expr, span| Span(expr, span)),
+            )
+            .map_with_span(|(((name, params), return_type), body), span| {
+                Span(
+                    Stmt::Function(Function {
+                        name,
+                        params,
+                        return_type,
+                        body,
+                    }),
+                    span,
+                )
             });
 
         let let_decl = text::keyword("let")
-            .ignore_then(ident)
+            .ignore_then(ident.map_with_span(|id, span| Span(id, span)))
             .then_ignore(just('='))
             .then(expr().padded())
             .then_ignore(just(';'))
-            .map(|(ident, expr)| Stmt::Let(ident, expr));
+            .map_with_span(|(ident, expr), span| Span(Stmt::Let(ident, expr), span));
 
         let let_if_decl = text::keyword("let")
-            .ignore_then(ident)
+            .ignore_then(ident.map_with_span(|id, span| Span(id, span)))
             .then_ignore(just('='))
             .then_ignore(text::keyword("if").padded())
             .then(expr())
-            .then(expr_block.clone())
+            .then(
+                expr_block
+                    .clone()
+                    .map_with_span(|block, span| Span(block, span)),
+            )
             .then_ignore(text::keyword("else"))
-            .then(expr_block)
-            .map(
-                |(((name, condition), then_block), else_block)| Stmt::LetIf {
-                    name,
-                    condition,
-                    then_block,
-                    else_block,
-                },
-            );
+            .then(expr_block.map_with_span(|block, span| Span(block, span)))
+            .map_with_span(|(((name, condition), then_block), else_block), span| {
+                Span(
+                    Stmt::LetIf {
+                        name,
+                        condition,
+                        then_block,
+                        else_block,
+                    },
+                    span,
+                )
+            });
 
         let block = stmt.repeated().delimited_by(just('{'), just('}'));
 
@@ -235,46 +288,64 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
             .ignore_then(expr())
             .then(block)
             .then(optional_else)
-            .map(|((condition, then_block), else_block)| Stmt::If {
-                condition,
-                then_block,
-                else_block,
+            .map_with_span(|((condition, then_block), else_block), span| {
+                Span(
+                    Stmt::If {
+                        condition,
+                        then_block,
+                        else_block,
+                    },
+                    span,
+                )
             });
 
         let import_stmt = text::keyword("import")
             .ignore_then(
                 text::keyword("extern")
                     .to(ImportType::External)
-                    .or(empty().to(ImportType::Internal)),
+                    .or(empty().to(ImportType::Internal))
+                    .map_with_span(|ty, span| Span(ty, span)),
             )
-            .then(ident.clone().map(Some).or(empty().to(None)))
+            .then(
+                ident
+                    .clone()
+                    .map_with_span(|i, span| Some(Span(i, span)))
+                    .or(empty().to(None)),
+            )
             .then_ignore(just(',').to(()).or(empty()))
             .then(
                 ident
                     .clone()
+                    .map_with_span(|i, span| Span(i, span))
                     .separated_by(just(','))
                     .allow_trailing()
                     .delimited_by(just('{'), just('}'))
                     .or(empty().to(Vec::new())),
             )
             .then_ignore(text::keyword("from"))
-            .then(string())
+            .then(string().map_with_span(|s, span| Span(s, span)))
             .then_ignore(just(';'))
-            .map(
-                |(((import_type, default_import), named_imports), module)| Stmt::Import {
-                    ty: import_type,
-                    default_import,
-                    named_imports,
-                    path: module,
+            .map_with_span(
+                |(((import_type, default_import), named_imports), module), span| {
+                    Span(
+                        Stmt::Import {
+                            ty: import_type,
+                            default_import,
+                            named_imports,
+                            path: module,
+                        },
+                        span,
+                    )
                 },
             );
 
-        let type_declaration = type_declaration().map(Stmt::Type);
+        let type_declaration =
+            type_declaration().map_with_span(|decl, span| Span(Stmt::Type(decl), span));
 
         let return_stmt = text::keyword("return")
             .ignore_then(expr().padded().map(Some).or(empty().to(None)))
             .then_ignore(just(';'))
-            .map(Stmt::Return);
+            .map_with_span(|expr, span| Span(Stmt::Return(expr), span));
 
         function_decl
             .or(let_if_decl)
@@ -283,12 +354,14 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
             .or(return_stmt)
             .or(import_stmt)
             .or(type_declaration)
-            .or(expr().then_ignore(just(';')).map(Stmt::Expr))
+            .or(expr()
+                .then_ignore(just(';'))
+                .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)))
             .padded()
     })
 }
 
-fn parser() -> impl Parser<char, Vec<Stmt>, Error = Simple<char>> {
+fn parser() -> impl Parser<char, Vec<Span<Stmt>>, Error = Simple<char>> {
     stmt().repeated().then_ignore(end())
 }
 

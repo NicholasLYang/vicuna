@@ -11,13 +11,15 @@
 //!  - Borrow checking
 //!
 use crate::ast::{
-    BinaryOp, Expr, Function, ImportType, PostFix, Program, Stmt, TypeDeclaration, TypeSig,
+    BinaryOp, Expr, Function, ImportType, PostFix, Program, Span, Stmt, TypeDeclaration, TypeSig,
     UnaryOp, Value,
 };
+use miette::Diagnostic;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::mem;
+use thiserror::Error;
 
 // TODO: Intern strings
 type Name = String;
@@ -114,58 +116,31 @@ pub struct TypeChecker {
     pub(crate) errors: Vec<TypeError>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Diagnostic, Error)]
 pub enum TypeError {
+    #[error("Type mismatch: expected {0}, got {1}")]
+    #[diagnostic(code(type_error::type_mismatch))]
     TypeMismatch(Type, Type),
+    #[error("Got different struct fields than defined: expected {0:?}, got {1:?}")]
     FieldsMismatch(HashMap<Name, Type>, HashMap<Name, Option<Type>>),
+    #[error("Undefined variable {0}")]
     UndefinedVariable(Name),
+    #[error("Undefined struct {0}")]
     UndefinedStruct(Name),
+    #[error("Expected {0} args but received {1}")]
     ArityMismatch(usize, usize),
+    #[error("Type {0} is not callable")]
     NotCallable(Type),
+    #[error("Type {0} is not a struct")]
     NotStruct(Type),
+    #[error("Type {0} is not an array")]
     NotArray(Type),
+    #[error("Cannot return outside a function")]
     ReturnOutsideFunction,
+    #[error("Struct {struct_name} does not have field {field_name}")]
     UndefinedField { struct_name: Name, field_name: Name },
+    #[error("Enum {enum_name} does not have variant {variant_name}")]
     UndefinedVariant { enum_name: Name, variant_name: Name },
-}
-
-// TODO: Make this some fancy error display
-impl Display for TypeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TypeError::TypeMismatch(expected, actual) => {
-                write!(f, "Expected type {}, got {}", expected, actual)
-            }
-            TypeError::FieldsMismatch(expected, actual) => {
-                write!(f, "Expected fields {:?}, got {:?}", expected, actual)
-            }
-            TypeError::UndefinedVariable(name) => write!(f, "Undefined variable {}", name),
-            TypeError::UndefinedStruct(name) => write!(f, "Undefined struct {}", name),
-            TypeError::ArityMismatch(expected, actual) => {
-                write!(f, "Expected {} arguments, got {}", expected, actual)
-            }
-            TypeError::NotCallable(ty) => write!(f, "Type {} is not callable", ty),
-            TypeError::NotStruct(ty) => write!(f, "Type {} is not a struct", ty),
-            TypeError::NotArray(ty) => write!(f, "Type {} is not an array", ty),
-            TypeError::ReturnOutsideFunction => write!(f, "Return statement outside function"),
-            TypeError::UndefinedField {
-                struct_name,
-                field_name,
-            } => write!(
-                f,
-                "Struct {} does not have field {}",
-                struct_name, field_name
-            ),
-            TypeError::UndefinedVariant {
-                enum_name,
-                variant_name,
-            } => write!(
-                f,
-                "Enum {} does not have variant {}",
-                enum_name, variant_name
-            ),
-        }
-    }
 }
 
 impl From<Option<&TypeSig>> for Type {
@@ -414,12 +389,12 @@ impl TypeChecker {
         Some(())
     }
 
-    fn check_expr(&mut self, expr: &Expr) -> Option<Type> {
-        match expr {
+    fn check_expr(&mut self, expr: &Span<Expr>) -> Option<Type> {
+        match &expr.0 {
             Expr::Binary(op, lhs, rhs) => {
                 let lhs_ty = self.check_expr(lhs)?;
                 let rhs_ty = self.check_expr(rhs)?;
-                match op {
+                match op.0 {
                     BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide => {
                         if lhs_ty == Type::I32 && rhs_ty == Type::I32 {
                             Some(Type::I32)
@@ -434,7 +409,7 @@ impl TypeChecker {
             }
             Expr::Unary(op, rhs) => {
                 let rhs_ty = self.check_expr(rhs)?;
-                match op {
+                match op.0 {
                     UnaryOp::Not => {
                         if rhs_ty != Type::Bool {
                             self.errors
@@ -549,22 +524,22 @@ impl TypeChecker {
             } => {
                 let Some(variant_fields) = self.defined_enums.lookup(enum_name).and_then(|enum_variants| enum_variants.get(variant_name)).cloned() else {
                     self.errors.push(TypeError::UndefinedVariant {
-                        enum_name: enum_name.clone(),
-                        variant_name: variant_name.clone(),
+                        enum_name: enum_name.0.clone(),
+                        variant_name: variant_name.0.clone(),
                     });
                     return None;
                 };
 
                 self.compare_fields(fields, variant_fields)?;
 
-                Some(Type::Named(variant_name.clone()))
+                Some(Type::Named(variant_name.0.clone()))
             }
         }
     }
 
     fn compare_fields(
         &mut self,
-        literal_fields: &HashMap<String, Expr>,
+        literal_fields: &HashMap<String, Span<Expr>>,
         mut struct_type_fields: HashMap<String, Type>,
     ) -> Option<()> {
         if literal_fields.len() != struct_type_fields.len() {
