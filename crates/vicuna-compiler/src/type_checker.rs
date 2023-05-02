@@ -19,6 +19,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::mem;
+use std::ops::Range;
 use thiserror::Error;
 
 // TODO: Intern strings
@@ -120,7 +121,12 @@ pub struct TypeChecker {
 pub enum TypeError {
     #[error("Type mismatch: expected {0}, got {1}")]
     #[diagnostic(code(type_error::type_mismatch))]
-    TypeMismatch(Type, Type),
+    TypeMismatch {
+        expected_ty: Type,
+        received_ty: Type,
+        #[label]
+        span: Range<usize>,
+    },
     #[error("Got different struct fields than defined: expected {0:?}, got {1:?}")]
     #[diagnostic(code(type_error::struct_fields_mismatch))]
     FieldsMismatch(HashMap<Name, Type>, Vec<(Span<Name>, Option<Type>)>),
@@ -279,8 +285,11 @@ impl TypeChecker {
             } => {
                 let condition_ty = self.check_expr(condition)?;
                 if condition_ty != Type::Bool {
-                    self.errors
-                        .push(TypeError::TypeMismatch(Type::Bool, condition_ty));
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected_ty: Type::Bool,
+                        received_ty: condition_ty,
+                        span: stmt.1.clone(),
+                    });
                 }
 
                 self.enter_scope();
@@ -308,8 +317,11 @@ impl TypeChecker {
                 let then_ty = then_ty?;
                 let else_ty = else_ty?;
                 if then_ty != else_ty {
-                    self.errors
-                        .push(TypeError::TypeMismatch(then_ty.clone(), else_ty));
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected_ty: then_ty.clone(),
+                        received_ty: else_ty,
+                        span: else_block.1.clone(),
+                    });
                 }
 
                 self.symbol_table.insert(name.0.clone(), then_ty);
@@ -347,8 +359,11 @@ impl TypeChecker {
                 let end_expr_ty = end_expr_ty?;
 
                 if end_expr_ty != return_type {
-                    self.errors
-                        .push(TypeError::TypeMismatch(end_expr_ty, return_type));
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected_ty: return_type,
+                        received_ty: end_expr_ty,
+                        span: body.0.end_expr.1.clone(),
+                    });
                 }
             }
             Stmt::If {
@@ -358,8 +373,11 @@ impl TypeChecker {
             } => {
                 let condition_ty = self.check_expr(condition)?;
                 if condition_ty != Type::Bool {
-                    self.errors
-                        .push(TypeError::TypeMismatch(Type::Bool, condition_ty));
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected_ty: Type::Bool,
+                        received_ty: condition_ty,
+                        span: condition.1.clone(),
+                    });
                 }
 
                 self.enter_scope();
@@ -379,8 +397,11 @@ impl TypeChecker {
 
                 if let Some(return_type) = &self.return_type {
                     if ty != *return_type {
-                        self.errors
-                            .push(TypeError::TypeMismatch(ty, return_type.clone()));
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected_ty: return_type.clone(),
+                            received_ty: ty,
+                            span: stmt.1.clone(),
+                        });
                     }
                 } else {
                     self.errors.push(TypeError::ReturnOutsideFunction);
@@ -421,7 +442,11 @@ impl TypeChecker {
                         } else if lhs_ty == Type::F32 && rhs_ty == Type::F32 {
                             Some(Type::F32)
                         } else {
-                            self.errors.push(TypeError::TypeMismatch(lhs_ty, rhs_ty));
+                            self.errors.push(TypeError::TypeMismatch {
+                                expected_ty: lhs_ty,
+                                received_ty: rhs_ty,
+                                span: rhs.1.clone(),
+                            });
                             None
                         }
                     }
@@ -432,15 +457,22 @@ impl TypeChecker {
                 match op.0 {
                     UnaryOp::Not => {
                         if rhs_ty != Type::Bool {
-                            self.errors
-                                .push(TypeError::TypeMismatch(Type::Bool, rhs_ty));
+                            self.errors.push(TypeError::TypeMismatch {
+                                expected_ty: Type::Bool,
+                                received_ty: rhs_ty,
+                                span: expr.1.clone(),
+                            });
                         }
 
                         Some(Type::Bool)
                     }
                     UnaryOp::Negate => {
                         if rhs_ty != Type::I32 {
-                            self.errors.push(TypeError::TypeMismatch(Type::I32, rhs_ty));
+                            self.errors.push(TypeError::TypeMismatch {
+                                expected_ty: Type::I32,
+                                received_ty: rhs_ty,
+                                span: expr.1.clone(),
+                            });
                         }
 
                         Some(Type::I32)
@@ -482,8 +514,11 @@ impl TypeChecker {
                     for (arg, param_type) in args.iter().zip(param_types) {
                         let arg_ty = self.check_expr(arg)?;
                         if arg_ty != param_type {
-                            self.errors
-                                .push(TypeError::TypeMismatch(param_type.clone(), arg_ty.clone()));
+                            self.errors.push(TypeError::TypeMismatch {
+                                expected_ty: param_type.clone(),
+                                received_ty: arg_ty.clone(),
+                                span: arg.1.clone(),
+                            });
                         }
                     }
 
@@ -516,8 +551,11 @@ impl TypeChecker {
                 let callee_ty = self.check_expr(callee)?;
                 let index_ty = self.check_expr(index)?;
                 if index_ty != Type::I32 {
-                    self.errors
-                        .push(TypeError::TypeMismatch(Type::I32, index_ty));
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected_ty: Type::I32,
+                        received_ty: index_ty,
+                        span: index.1.clone(),
+                    });
                 }
 
                 if let Type::Array(ty) = callee_ty {
@@ -594,10 +632,11 @@ impl TypeChecker {
             let expr_ty = self.check_expr(field_value)?;
             if let Some(expected_ty) = struct_type_fields.get(&field_name.0) {
                 if &expr_ty != expected_ty {
-                    self.errors.push(TypeError::TypeMismatch(
-                        expr_ty.clone(),
-                        expected_ty.clone(),
-                    ));
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected_ty: expected_ty.clone(),
+                        received_ty: expr_ty.clone(),
+                        span: field_value.1.clone(),
+                    });
                 }
             } else {
                 self.errors.push(TypeError::MissingField {
@@ -619,24 +658,34 @@ mod tests {
     #[test]
     fn test_check_expr() {
         let mut checker = TypeChecker::new();
-        let expr = Expr::Binary(
-            BinaryOp::Add,
-            Box::new(Expr::Value(Value::I32(1))),
-            Box::new(Expr::Value(Value::I32(2))),
+        let expr = Span(
+            Expr::Binary(
+                Span(BinaryOp::Add, 3..4),
+                Box::new(Span(Expr::Value(Value::I32(1)), 0..1)),
+                Box::new(Span(Expr::Value(Value::I32(2)), 6..7)),
+            ),
+            0..7,
         );
 
         assert_eq!(checker.check_expr(&expr), Some(Type::I32));
 
-        let expr = Expr::Binary(
-            BinaryOp::Add,
-            Box::new(Expr::Value(Value::I32(1))),
-            Box::new(Expr::Value(Value::Bool(true))),
+        let expr = Span(
+            Expr::Binary(
+                Span(BinaryOp::Add, 3..4),
+                Box::new(Span(Expr::Value(Value::I32(1)), 0..1)),
+                Box::new(Span(Expr::Value(Value::Bool(true)), 6..9)),
+            ),
+            0..9,
         );
 
         assert_eq!(checker.check_expr(&expr), None);
         assert_eq!(
             checker.errors,
-            vec![TypeError::TypeMismatch(Type::I32, Type::Bool)]
+            vec![TypeError::TypeMismatch {
+                expected_ty: Type::I32,
+                received_ty: Type::Bool,
+                span: 6..9
+            }]
         );
     }
 
@@ -644,27 +693,47 @@ mod tests {
     fn test_variable_scopes() {
         let checker = TypeChecker::new();
         let program = Program {
-            type_declarations: vec![],
             statements: vec![
-                Stmt::Let("x".into(), Expr::Value(Value::I32(1))),
-                Stmt::Let("y".into(), Expr::Value(Value::I32(2))),
-                Stmt::LetIf {
-                    name: "z".into(),
-                    condition: Expr::Value(Value::Bool(true)),
-                    then_block: ExprBlock {
-                        stmts: vec![],
-                        end_expr: Some(Expr::Variable("x".into())),
+                Span(
+                    Stmt::Let("x".into(), Span(Expr::Value(Value::I32(1)), 0..1)),
+                    0..1,
+                ),
+                Span(
+                    Stmt::Let("y".into(), Span(Expr::Value(Value::I32(2)), 10..11)),
+                    10..11,
+                ),
+                Span(
+                    Stmt::LetIf {
+                        name: "z".into(),
+                        condition: Span(Expr::Value(Value::Bool(true)), 20..24),
+                        then_block: Span(
+                            ExprBlock {
+                                stmts: vec![],
+                                end_expr: Some(Span(Expr::Variable("x".into()), 30..31)),
+                            },
+                            26..32,
+                        ),
+                        else_block: Span(
+                            ExprBlock {
+                                stmts: vec![],
+                                end_expr: Some(Span(Expr::Variable("y".into()))),
+                            },
+                            34..35,
+                        ),
                     },
-                    else_block: ExprBlock {
-                        stmts: vec![],
-                        end_expr: Some(Expr::Variable("y".into())),
-                    },
-                },
-                Stmt::Expr(Expr::Binary(
-                    BinaryOp::Add,
-                    Box::new(Expr::Variable("z".into())),
-                    Box::new(Expr::Variable("y".into())),
-                )),
+                    20..35,
+                ),
+                Span(
+                    Stmt::Expr(Span(
+                        Expr::Binary(
+                            Span(BinaryOp::Add, 3..4),
+                            Box::new(Span(Expr::Variable("z".into()), 0..1)),
+                            Box::new(Span(Expr::Variable("y".into()), 6..7)),
+                        ),
+                        0..7,
+                    )),
+                    0..7,
+                ),
             ],
         };
 
@@ -672,7 +741,6 @@ mod tests {
 
         let checker = TypeChecker::new();
         let program = Program {
-            type_declarations: vec![],
             statements: vec![
                 Stmt::Let("x".into(), Expr::Value(Value::I32(1))),
                 Stmt::Let("y".into(), Expr::Value(Value::I32(2))),
@@ -710,7 +778,6 @@ mod tests {
     fn test_function_hoisting() {
         let checker = TypeChecker::new();
         let program = Program {
-            type_declarations: vec![],
             statements: vec![
                 Stmt::Function(Function {
                     name: "f".into(),
@@ -732,7 +799,6 @@ mod tests {
 
         let checker = TypeChecker::new();
         let program = Program {
-            type_declarations: vec![],
             statements: vec![Stmt::Let(
                 "x".into(),
                 Expr::PostFix(Box::new(Expr::Variable("f".into())), PostFix::Args(vec![])),
