@@ -1,31 +1,31 @@
 use serde::Serialize;
 use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::ops::Range;
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct Program {
-    pub statements: Vec<Stmt>,
+    pub statements: Vec<Span<Stmt>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
-pub struct Span<T: Debug + Clone + PartialEq + Serialize + Hash>(pub T, pub Range<usize>);
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Span<T: Debug + Clone + PartialEq + Serialize>(pub T, pub Range<usize>);
 
 impl<T: Debug + Clone + PartialEq + Serialize + Hash> Eq for Span<T> {}
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum TypeDeclaration {
     Struct {
         name: Span<String>,
-        fields: Vec<(String, Span<TypeSig>)>,
+        fields: Vec<(Span<String>, Span<TypeSig>)>,
     },
     Enum {
-        name: String,
-        variants: Vec<(String, Vec<(String, Span<TypeSig>)>)>,
+        name: Span<String>,
+        variants: Vec<(Span<String>, Vec<(Span<String>, Span<TypeSig>)>)>,
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Function {
     pub name: Span<String>,
     pub params: Vec<(Span<String>, Span<TypeSig>)>,
@@ -33,7 +33,7 @@ pub struct Function {
     pub body: Span<ExprBlock>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Stmt {
     Let(Span<String>, Span<Expr>),
     Function(Function),
@@ -67,7 +67,7 @@ pub enum Stmt {
     Type(TypeDeclaration),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum ImportType {
     // An import from another Vicuna module
     Internal,
@@ -75,13 +75,13 @@ pub enum ImportType {
     External,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ExprBlock {
     pub stmts: Vec<Span<Stmt>>,
     pub end_expr: Option<Span<Expr>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Expr {
     Value(Value),
     Variable(String),
@@ -99,14 +99,14 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum PostFix {
     Field(Span<String>),
     Index(Box<Span<Expr>>),
     Args(Vec<Span<Expr>>),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum TypeSig {
     I32,
     F32,
@@ -117,7 +117,7 @@ pub enum TypeSig {
 
 impl Eq for TypeSig {}
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Value {
     I32(i32),
     F32(f32),
@@ -125,7 +125,7 @@ pub enum Value {
     String(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum BinaryOp {
     Add,
     Subtract,
@@ -133,7 +133,7 @@ pub enum BinaryOp {
     Multiply,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Serialize, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Serialize)]
 pub enum UnaryOp {
     Negate,
     Not,

@@ -9,6 +9,7 @@ wasm-opt = false
 
 [dependencies]
 console_error_panic_hook = "0.1.7"
+miette = { version = "5.8.0", features = ["fancy"] }
 serde_json = "1.0.94"
 tracing-wasm = "0.2.1"
 vicuna-compiler = { path = "../vicuna-compiler" }

@@ -786,6 +786,7 @@ name = "vicuna-wasm"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "miette",
  "serde_json",
  "tracing-wasm",
  "vicuna-compiler",

@@ -3,7 +3,6 @@ use crate::ast::{
     TypeSig, UnaryOp, Value,
 };
 use chumsky::prelude::*;
-use std::collections::HashMap;
 
 fn string() -> impl Parser<char, String, Error = Simple<char>> + Clone {
     let string_char = none_of('"').or(just('\\').ignore_then(any()));
@@ -42,7 +41,7 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = Simple<char>> + Cl
         let fields = ident
             .map_with_span(|s, span| Span(s, span))
             .then_ignore(just(':'))
-            .then(expr.clone().map_with_span(|e, span| Span(e, span)))
+            .then(expr.clone())
             .separated_by(just(','))
             .delimited_by(just('{'), just('}'));
 
@@ -82,7 +81,6 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = Simple<char>> + Cl
 
         let args = expr
             .clone()
-            .map_with_span(|e, span| Span(e, span))
             .separated_by(just(','))
             .allow_trailing()
             .delimited_by(just('('), just(')'))
@@ -93,19 +91,13 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = Simple<char>> + Cl
             .map_with_span(|field, span| Span(PostFix::Field(field), span));
 
         let index = just('[')
-            .ignore_then(expr.clone().map_with_span(|e, span| Span(e, span)))
+            .ignore_then(expr.clone())
             .then_ignore(just(']'))
             .map_with_span(|index, span| Span(PostFix::Index(Box::new(index)), span));
 
         let call = atom
             .clone()
-            .map_with_span(|e, span| Span(e, span))
-            .then(
-                args.or(field)
-                    .or(index)
-                    .repeated()
-                    .map_with_span(|e, span| Span(e, span)),
-            )
+            .then(args.or(field).or(index).repeated())
             .foldl(|callee, post_fix| {
                 let span = (callee.1.start())..(post_fix.1.end());
                 Span(Expr::PostFix(Box::new(callee), post_fix), span)
@@ -116,9 +108,13 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = Simple<char>> + Cl
         let unary = op('-')
             .to(UnaryOp::Negate)
             .or(op('!').to(UnaryOp::Not))
+            .map_with_span(|op, span| Span(op, span))
             .repeated()
             .then(call.or(atom))
-            .foldr(|op, rhs| Expr::Unary(op, Box::new(rhs)));
+            .foldr(|op, rhs| {
+                let span = (op.1.start())..(rhs.1.end());
+                Span(Expr::Unary(op, Box::new(rhs)), span)
+            });
 
         let product = unary
             .clone()
@@ -129,37 +125,48 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = Simple<char>> + Cl
                     .then(unary)
                     .repeated(),
             )
-            .foldl(|lhs, (op, rhs)| Expr::Binary(op, Box::new(lhs), Box::new(rhs)));
+            .foldl(|lhs, (op, rhs)| {
+                let span = (lhs.1.start())..(rhs.1.end());
+                Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
+            });
 
-        product
+        let addition = product
             .clone()
             .then(
                 op('+')
-                    .map_with_span(|_, span| Span(BinaryOp::Add, span))
-                    .or(op('-').map_with_span(|_, span| Span(BinaryOp::Subtract, span)))
+                    .to(BinaryOp::Add)
+                    .or(op('-').to(BinaryOp::Subtract))
+                    .map_with_span(|op, span| Span(op, span))
                     .then(product)
                     .repeated(),
             )
-            .foldl(|lhs, (op, rhs)| Expr::Binary(op, Box::new(lhs), Box::new(rhs)))
+            .foldl(|lhs, (op, rhs)| {
+                let span = (lhs.1.start())..(rhs.1.end());
+                Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
+            });
+
+        addition
     })
 }
 
 fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = Simple<char>> + Clone {
-    ident().map_with_span(|id, span| {
-        let sig = match id.as_str() {
+    ident().map(|id| {
+        let sig = match id.0.as_str() {
             "i32" => TypeSig::I32,
             "f32" => TypeSig::F32,
             "string" => TypeSig::String,
             "bool" => TypeSig::Bool,
-            _ => TypeSig::Named(id),
+            name => TypeSig::Named(name.to_string()),
         };
 
-        Span(sig, span)
+        Span(sig, id.1)
     })
 }
 
-fn ident() -> impl Parser<char, String, Error = Simple<char>> + Clone + Copy {
-    text::ident().padded()
+fn ident() -> impl Parser<char, Span<String>, Error = Simple<char>> + Clone + Copy {
+    text::ident()
+        .padded()
+        .map_with_span(|s, span| Span(s, span))
 }
 
 fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = Simple<char>> {
@@ -172,14 +179,14 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = Simple<char>
         .allow_trailing()
         .padded()
         .delimited_by(just('{'), just('}'))
-        .map(|fields| fields.into_iter().collect::<HashMap<_, _>>());
+        .map(|fields| fields.into_iter().collect::<Vec<_>>());
 
     let struct_declaration = text::keyword("struct")
-        .ignore_then(ident.clone().map_with_span(|i, span| Span(i, span)))
+        .ignore_then(ident.clone())
         .then(fields.clone())
         .map(|(name, fields)| TypeDeclaration::Struct { name, fields });
 
-    let enum_variant = ident.then(fields.or(empty().to(HashMap::new()))).padded();
+    let enum_variant = ident.then(fields.or(empty().to(Vec::new()))).padded();
 
     let enum_declaration = text::keyword("enum")
         .ignore_then(ident)
@@ -210,7 +217,6 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = Simple<char>> {
             .padded();
 
         let function_parameters = ident
-            .map_with_span(|id, span| Span(id, span))
             .then_ignore(just(':'))
             .then(type_signature())
             .padded()
@@ -226,7 +232,7 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = Simple<char>> {
         let optional_return_type = return_type.or(empty().to(None));
 
         let function_decl = text::keyword("fn")
-            .ignore_then(ident.map_with_span(|id, span| Span(id, span)))
+            .ignore_then(ident)
             .then(function_parameters)
             .then(optional_return_type)
             .then(
@@ -247,14 +253,14 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = Simple<char>> {
             });
 
         let let_decl = text::keyword("let")
-            .ignore_then(ident.map_with_span(|id, span| Span(id, span)))
+            .ignore_then(ident)
             .then_ignore(just('='))
             .then(expr().padded())
             .then_ignore(just(';'))
             .map_with_span(|(ident, expr), span| Span(Stmt::Let(ident, expr), span));
 
         let let_if_decl = text::keyword("let")
-            .ignore_then(ident.map_with_span(|id, span| Span(id, span)))
+            .ignore_then(ident)
             .then_ignore(just('='))
             .then_ignore(text::keyword("if").padded())
             .then(expr())
@@ -306,17 +312,11 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = Simple<char>> {
                     .or(empty().to(ImportType::Internal))
                     .map_with_span(|ty, span| Span(ty, span)),
             )
-            .then(
-                ident
-                    .clone()
-                    .map_with_span(|i, span| Some(Span(i, span)))
-                    .or(empty().to(None)),
-            )
+            .then(ident.clone().map(Some).or(empty().to(None)))
             .then_ignore(just(',').to(()).or(empty()))
             .then(
                 ident
                     .clone()
-                    .map_with_span(|i, span| Span(i, span))
                     .separated_by(just(','))
                     .allow_trailing()
                     .delimited_by(just('{'), just('}'))

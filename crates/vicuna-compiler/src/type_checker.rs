@@ -24,7 +24,7 @@ use thiserror::Error;
 // TODO: Intern strings
 type Name = String;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
 pub enum Type {
     I32,
     F32,
@@ -111,7 +111,7 @@ impl<T> SymbolTable<T> {
 pub struct TypeChecker {
     symbol_table: SymbolTable<Type>,
     defined_structs: SymbolTable<HashMap<Name, Type>>,
-    defined_enums: SymbolTable<HashMap<Name, HashMap<Name, Type>>>,
+    defined_enums: SymbolTable<Vec<(Span<Name>, HashMap<Name, Type>)>>,
     return_type: Option<Type>,
     pub(crate) errors: Vec<TypeError>,
 }
@@ -122,7 +122,11 @@ pub enum TypeError {
     #[diagnostic(code(type_error::type_mismatch))]
     TypeMismatch(Type, Type),
     #[error("Got different struct fields than defined: expected {0:?}, got {1:?}")]
-    FieldsMismatch(HashMap<Name, Type>, HashMap<Name, Option<Type>>),
+    #[diagnostic(code(type_error::struct_fields_mismatch))]
+    FieldsMismatch(HashMap<Name, Type>, Vec<(Span<Name>, Option<Type>)>),
+    #[error("Missing field {field_name} in struct {struct_name}")]
+    #[diagnostic(code(type_error::missing_field))]
+    MissingField { field_name: Name, struct_name: Name },
     #[error("Undefined variable {0}")]
     UndefinedVariable(Name),
     #[error("Undefined struct {0}")]
@@ -149,6 +153,23 @@ impl From<Option<&TypeSig>> for Type {
             Some(sig) => sig.into(),
             None => Type::Void,
         }
+    }
+}
+
+impl From<&Option<Span<TypeSig>>> for Type {
+    fn from(value: &Option<Span<TypeSig>>) -> Self {
+        match value {
+            Some(sig) => sig.into(),
+            None => Type::Void,
+        }
+    }
+}
+
+impl From<&Span<TypeSig>> for Type {
+    fn from(span: &Span<TypeSig>) -> Self {
+        let ty: Type = (&span.0).into();
+
+        ty
     }
 }
 
@@ -196,17 +217,16 @@ impl TypeChecker {
     fn add_type_declaration(&mut self, type_declaration: &TypeDeclaration) {
         match type_declaration {
             TypeDeclaration::Struct { name, fields } => {
-                self.defined_structs.insert(
-                    name.clone(),
-                    fields
-                        .iter()
-                        .map(|(name, ty)| (name.clone(), ty.into()))
-                        .collect(),
-                );
+                let fields: HashMap<_, _> = fields
+                    .iter()
+                    .map(|(name, ty)| (name.0.clone(), ty.into()))
+                    .collect();
+
+                self.defined_structs.insert(name.0.clone(), fields);
             }
             TypeDeclaration::Enum { name, variants } => {
                 self.defined_enums.insert(
-                    name.clone(),
+                    name.0.clone(),
                     variants
                         .iter()
                         .map(|(name, fields)| {
@@ -214,7 +234,7 @@ impl TypeChecker {
                                 name.clone(),
                                 fields
                                     .iter()
-                                    .map(|(name, ty)| (name.clone(), ty.into()))
+                                    .map(|(name, ty)| (name.0.clone(), ty.into()))
                                     .collect(),
                             )
                         })
@@ -224,20 +244,20 @@ impl TypeChecker {
         }
     }
 
-    fn check_block(&mut self, stmts: &[Stmt]) {
+    fn check_block(&mut self, stmts: &[Span<Stmt>]) {
         for stmt in stmts {
             if let Stmt::Function(Function {
                 name,
                 return_type,
                 params,
                 ..
-            }) = stmt
+            }) = &stmt.0
             {
                 let ty = Type::Function {
                     param_types: params.iter().map(|(_, ty)| ty.into()).collect(),
-                    return_type: Box::new(return_type.as_ref().into()),
+                    return_type: Box::new(return_type.into()),
                 };
-                self.symbol_table.insert(name.clone(), ty);
+                self.symbol_table.insert(name.0.clone(), ty);
             }
         }
         for stmt in stmts {
@@ -245,11 +265,11 @@ impl TypeChecker {
         }
     }
 
-    fn check_stmt(&mut self, stmt: &Stmt) -> Option<()> {
-        match stmt {
+    fn check_stmt(&mut self, stmt: &Span<Stmt>) -> Option<()> {
+        match &stmt.0 {
             Stmt::Let(name, rhs) => {
                 let ty = self.check_expr(rhs)?;
-                self.symbol_table.insert(name.clone(), ty);
+                self.symbol_table.insert(name.0.clone(), ty);
             }
             Stmt::LetIf {
                 name,
@@ -265,9 +285,9 @@ impl TypeChecker {
 
                 self.enter_scope();
 
-                self.check_block(&then_block.stmts);
+                self.check_block(&then_block.0.stmts);
 
-                let then_ty = if let Some(end_expr) = &then_block.end_expr {
+                let then_ty = if let Some(end_expr) = &then_block.0.end_expr {
                     self.check_expr(end_expr)
                 } else {
                     Some(Type::Void)
@@ -275,9 +295,9 @@ impl TypeChecker {
 
                 self.exit_scope();
                 self.enter_scope();
-                self.check_block(&else_block.stmts);
+                self.check_block(&else_block.0.stmts);
 
-                let else_ty = if let Some(end_expr) = &else_block.end_expr {
+                let else_ty = if let Some(end_expr) = &else_block.0.end_expr {
                     self.check_expr(end_expr)
                 } else {
                     Some(Type::Void)
@@ -292,7 +312,7 @@ impl TypeChecker {
                         .push(TypeError::TypeMismatch(then_ty.clone(), else_ty));
                 }
 
-                self.symbol_table.insert(name.clone(), then_ty);
+                self.symbol_table.insert(name.0.clone(), then_ty);
             }
             Stmt::Expr(expr) => {
                 self.check_expr(expr)?;
@@ -306,16 +326,16 @@ impl TypeChecker {
                 self.enter_scope();
 
                 for (name, ty) in params {
-                    self.symbol_table.insert(name.clone(), ty.into());
+                    self.symbol_table.insert(name.0.clone(), ty.into());
                 }
 
-                let return_type: Type = return_type.as_ref().into();
+                let return_type: Type = return_type.as_ref().map(|span| &span.0).into();
 
                 let old_return_type = mem::replace(&mut self.return_type, Some(return_type));
 
-                self.check_block(&body.stmts);
+                self.check_block(&body.0.stmts);
 
-                let end_expr_ty = if let Some(end_expr) = &body.end_expr {
+                let end_expr_ty = if let Some(end_expr) = &body.0.end_expr {
                     self.check_expr(end_expr)
                 } else {
                     Some(Type::Void)
@@ -367,17 +387,17 @@ impl TypeChecker {
                 }
             }
             Stmt::Import {
-                ty: ImportType::External,
+                ty: Span(ImportType::External, _),
                 default_import,
                 named_imports,
                 path: _,
             } => {
                 if let Some(default_import) = default_import {
-                    self.symbol_table.insert(default_import.clone(), Type::Js);
+                    self.symbol_table.insert(default_import.0.clone(), Type::Js);
                 }
 
                 for name in named_imports {
-                    self.symbol_table.insert(name.clone(), Type::Js);
+                    self.symbol_table.insert(name.0.clone(), Type::Js);
                 }
             }
             Stmt::Type(decl) => {
@@ -441,8 +461,8 @@ impl TypeChecker {
                     None
                 }
             }
-            Expr::PostFix(callee, PostFix::Args(args)) => {
-                if let Expr::Variable(name) = callee.as_ref() {
+            Expr::PostFix(callee, Span(PostFix::Args(args), _)) => {
+                if let Expr::Variable(name) = &callee.0 {
                     if name == "print" {
                         return Some(Type::Void);
                     }
@@ -473,16 +493,16 @@ impl TypeChecker {
                     None
                 }
             }
-            Expr::PostFix(callee, PostFix::Field(field)) => {
+            Expr::PostFix(callee, Span(PostFix::Field(field), _)) => {
                 let callee_ty = self.check_expr(callee)?;
                 if let Type::Named(struct_name) = callee_ty {
                     let fields = self.defined_structs.lookup(&struct_name)?;
-                    if let Some(ty) = fields.get(field) {
+                    if let Some(ty) = fields.get(&field.0) {
                         Some(ty.clone())
                     } else {
                         self.errors.push(TypeError::UndefinedField {
                             struct_name: struct_name.clone(),
-                            field_name: field.clone(),
+                            field_name: field.0.clone(),
                         });
 
                         None
@@ -492,7 +512,7 @@ impl TypeChecker {
                     None
                 }
             }
-            Expr::PostFix(callee, PostFix::Index(index)) => {
+            Expr::PostFix(callee, Span(PostFix::Index(index), _)) => {
                 let callee_ty = self.check_expr(callee)?;
                 let index_ty = self.check_expr(index)?;
                 if index_ty != Type::I32 {
@@ -508,21 +528,23 @@ impl TypeChecker {
                 }
             }
             Expr::Struct(name, literal_fields) => {
-                let Some(struct_type_fields) = self.defined_structs.lookup(name).cloned() else {
-                    self.errors.push(TypeError::UndefinedStruct(name.clone()));
+                let Some(struct_type_fields) = self.defined_structs.lookup(&name.0).cloned() else {
+                    self.errors.push(TypeError::UndefinedStruct(name.0.clone()));
                     return None;
                 };
 
-                self.compare_fields(literal_fields, struct_type_fields)?;
+                self.compare_fields(&name.0, literal_fields, &struct_type_fields)?;
 
-                Some(Type::Named(name.clone()))
+                Some(Type::Named(name.0.clone()))
             }
             Expr::Enum {
                 enum_name,
                 variant_name,
                 fields,
             } => {
-                let Some(variant_fields) = self.defined_enums.lookup(enum_name).and_then(|enum_variants| enum_variants.get(variant_name)).cloned() else {
+                let enum_variants = self.defined_enums.lookup(&enum_name.0);
+
+                let Some(variant_fields) = enum_variants.and_then(|enum_variants| enum_variants.iter().find(|(name, _)| &name.0 == &variant_name.0)).cloned() else {
                     self.errors.push(TypeError::UndefinedVariant {
                         enum_name: enum_name.0.clone(),
                         variant_name: variant_name.0.clone(),
@@ -530,27 +552,36 @@ impl TypeChecker {
                     return None;
                 };
 
-                self.compare_fields(fields, variant_fields)?;
+                self.compare_fields(&variant_name.0, fields, &variant_fields.1)?;
 
                 Some(Type::Named(variant_name.0.clone()))
             }
         }
     }
 
+    // Gets types from the fields of a struct literal. Used to produce an error
+    fn get_field_types(
+        &mut self,
+        fields: &Vec<(Span<String>, Span<Expr>)>,
+    ) -> Vec<(Span<String>, Option<Type>)> {
+        let mut field_types = Vec::new();
+        for (field_name, field_value) in fields {
+            let field_ty = self.check_expr(field_value);
+            field_types.push((field_name.clone(), field_ty));
+        }
+
+        field_types
+    }
+
     fn compare_fields(
         &mut self,
-        literal_fields: &HashMap<String, Span<Expr>>,
-        mut struct_type_fields: HashMap<String, Type>,
+        struct_name: &str,
+        literal_fields: &Vec<(Span<String>, Span<Expr>)>,
+        struct_type_fields: &HashMap<String, Type>,
     ) -> Option<()> {
         if literal_fields.len() != struct_type_fields.len() {
             let struct_type_fields = struct_type_fields.clone();
-            let literal_field_types = literal_fields
-                .iter()
-                .map(|(field_name, field_value)| {
-                    let field_ty = self.check_expr(field_value);
-                    (field_name.clone(), field_ty)
-                })
-                .collect::<HashMap<_, _>>();
+            let literal_field_types = self.get_field_types(&literal_fields);
 
             self.errors.push(TypeError::FieldsMismatch(
                 struct_type_fields,
@@ -559,22 +590,20 @@ impl TypeChecker {
             return None;
         }
 
-        for (field_name, expr) in literal_fields.iter() {
-            let expected_ty = if let Some(expected_ty) = struct_type_fields.remove(field_name) {
-                expected_ty
+        for (field_name, field_value) in literal_fields {
+            let expr_ty = self.check_expr(field_value)?;
+            if let Some(expected_ty) = struct_type_fields.get(&field_name.0) {
+                if &expr_ty != expected_ty {
+                    self.errors.push(TypeError::TypeMismatch(
+                        expr_ty.clone(),
+                        expected_ty.clone(),
+                    ));
+                }
             } else {
-                self.errors.push(TypeError::UndefinedField {
-                    struct_name: field_name.clone(),
-                    field_name: field_name.clone(),
+                self.errors.push(TypeError::MissingField {
+                    struct_name: struct_name.to_string(),
+                    field_name: field_name.0.clone(),
                 });
-                return None;
-            };
-
-            let expr_ty = self.check_expr(expr)?;
-
-            if expr_ty != expected_ty {
-                self.errors
-                    .push(TypeError::TypeMismatch(expr_ty.clone(), expected_ty));
             }
         }
 
