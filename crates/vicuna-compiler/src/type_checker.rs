@@ -119,7 +119,7 @@ pub struct TypeChecker {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Diagnostic, Error)]
 pub enum TypeError {
-    #[error("Type mismatch: expected {0}, got {1}")]
+    #[error("Type mismatch: expected {expected_ty}, got {received_ty}")]
     #[diagnostic(code(type_error::type_mismatch))]
     TypeMismatch {
         expected_ty: Type,
@@ -655,6 +655,12 @@ mod tests {
     use super::*;
     use crate::ast::ExprBlock;
 
+    fn parse_program(code: &str) -> Program {
+        let (program, _) = crate::parse(code);
+
+        program.expect("Failed to parse program")
+    }
+
     #[test]
     fn test_check_expr() {
         let mut checker = TypeChecker::new();
@@ -692,77 +698,25 @@ mod tests {
     #[test]
     fn test_variable_scopes() {
         let checker = TypeChecker::new();
-        let program = Program {
-            statements: vec![
-                Span(
-                    Stmt::Let("x".into(), Span(Expr::Value(Value::I32(1)), 0..1)),
-                    0..1,
-                ),
-                Span(
-                    Stmt::Let("y".into(), Span(Expr::Value(Value::I32(2)), 10..11)),
-                    10..11,
-                ),
-                Span(
-                    Stmt::LetIf {
-                        name: "z".into(),
-                        condition: Span(Expr::Value(Value::Bool(true)), 20..24),
-                        then_block: Span(
-                            ExprBlock {
-                                stmts: vec![],
-                                end_expr: Some(Span(Expr::Variable("x".into()), 30..31)),
-                            },
-                            26..32,
-                        ),
-                        else_block: Span(
-                            ExprBlock {
-                                stmts: vec![],
-                                end_expr: Some(Span(Expr::Variable("y".into()))),
-                            },
-                            34..35,
-                        ),
-                    },
-                    20..35,
-                ),
-                Span(
-                    Stmt::Expr(Span(
-                        Expr::Binary(
-                            Span(BinaryOp::Add, 3..4),
-                            Box::new(Span(Expr::Variable("z".into()), 0..1)),
-                            Box::new(Span(Expr::Variable("y".into()), 6..7)),
-                        ),
-                        0..7,
-                    )),
-                    0..7,
-                ),
-            ],
-        };
+        let program = parse_program(
+            "
+        let x = 1;
+        let y = 2;
+        let z = if true { x } else { y }
+        z + y;",
+        );
 
         assert_eq!(checker.check(&program), vec![]);
 
         let checker = TypeChecker::new();
-        let program = Program {
-            statements: vec![
-                Stmt::Let("x".into(), Expr::Value(Value::I32(1))),
-                Stmt::Let("y".into(), Expr::Value(Value::I32(2))),
-                Stmt::LetIf {
-                    name: "z".into(),
-                    condition: Expr::Value(Value::Bool(true)),
-                    then_block: ExprBlock {
-                        stmts: vec![],
-                        end_expr: Some(Expr::Variable("a".into())),
-                    },
-                    else_block: ExprBlock {
-                        stmts: vec![],
-                        end_expr: Some(Expr::Variable("b".into())),
-                    },
-                },
-                Stmt::Expr(Expr::Binary(
-                    BinaryOp::Add,
-                    Box::new(Expr::Variable("c".into())),
-                    Box::new(Expr::Variable("y".into())),
-                )),
-            ],
-        };
+        let program = parse_program(
+            "
+        let x = 1;
+        let y = 2;
+        let z = if true { a } else { b }
+        c + y;
+        ",
+        );
 
         assert_eq!(
             checker.check(&program),
@@ -777,33 +731,17 @@ mod tests {
     #[test]
     fn test_function_hoisting() {
         let checker = TypeChecker::new();
-        let program = Program {
-            statements: vec![
-                Stmt::Function(Function {
-                    name: "f".into(),
-                    params: vec![],
-                    return_type: Some(TypeSig::I32),
-                    body: ExprBlock {
-                        stmts: vec![],
-                        end_expr: Some(Expr::Value(Value::I32(1))),
-                    },
-                }),
-                Stmt::Let(
-                    "x".into(),
-                    Expr::PostFix(Box::new(Expr::Variable("f".into())), PostFix::Args(vec![])),
-                ),
-            ],
-        };
+        let program = parse_program(
+            "
+        fn f() -> i32 { 1 }
+        let x = f();
+        ",
+        );
 
         assert_eq!(checker.check(&program), vec![]);
 
         let checker = TypeChecker::new();
-        let program = Program {
-            statements: vec![Stmt::Let(
-                "x".into(),
-                Expr::PostFix(Box::new(Expr::Variable("f".into())), PostFix::Args(vec![])),
-            )],
-        };
+        let program = parse_program("let x = f()");
 
         assert_eq!(
             checker.check(&program),
