@@ -1,4 +1,5 @@
-use vicuna_compiler::{compile, parse, CompilerOutput};
+use miette::Report;
+use vicuna_compiler::{compile, parse, CompilerOutput, Errors};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -52,10 +53,22 @@ pub fn run_compiler(source: &str) -> WasmOutput {
     match compile(source) {
         Ok(CompilerOutput {
             js,
-            type_errors,
+            errors:
+                Errors {
+                    parse_errors,
+                    type_errors,
+                },
             ast,
         }) => {
-            errors.extend(type_errors.into_iter().map(|e| e.to_string()));
+            let errors = parse_errors
+                .into_iter()
+                .map(|e| e.to_string())
+                .chain(
+                    type_errors
+                        .into_iter()
+                        .map(|e| format!("{:?}", Report::new(e))),
+                )
+                .collect();
 
             WasmOutput {
                 js: Some(js),

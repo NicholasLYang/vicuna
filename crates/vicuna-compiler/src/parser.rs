@@ -1,11 +1,63 @@
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, Function, ImportType, PostFix, Program, Stmt, TypeDeclaration,
+    BinaryOp, Expr, ExprBlock, Function, ImportType, PostFix, Program, Span, Stmt, TypeDeclaration,
     TypeSig, UnaryOp, Value,
 };
 use chumsky::prelude::*;
-use std::collections::HashMap;
+use miette::Diagnostic;
+use serde::Serialize;
+use std::ops::Range;
+use thiserror::Error;
 
-fn string() -> impl Parser<char, String, Error = Simple<char>> + Clone {
+#[derive(Debug, Clone, Serialize, Error, Diagnostic)]
+pub enum ParseError {
+    #[diagnostic(code(parse_error::expected_found))]
+    #[error("Expected {expected_chars:?} but found {received_char:?}")]
+    ExpectedFound {
+        #[label]
+        span: Range<usize>,
+        expected_chars: Vec<Option<char>>,
+        received_char: Option<char>,
+    },
+}
+
+impl chumsky::Error<char> for ParseError {
+    type Span = Range<usize>;
+    type Label = ();
+
+    fn expected_input_found<Iter: IntoIterator<Item = Option<char>>>(
+        span: Self::Span,
+        expected_chars: Iter,
+        received_char: Option<char>,
+    ) -> Self {
+        Self::ExpectedFound {
+            span,
+            expected_chars: expected_chars.into_iter().collect(),
+            received_char,
+        }
+    }
+
+    fn with_label(self, _: Self::Label) -> Self {
+        self
+    }
+
+    fn merge(mut self, mut other: Self) -> Self {
+        #[allow(irrefutable_let_patterns)]
+        if let (
+            Self::ExpectedFound { expected_chars, .. },
+            Self::ExpectedFound {
+                expected_chars: expected_other,
+                ..
+            },
+        ) = (&mut self, &mut other)
+        {
+            expected_chars.append(expected_other)
+        }
+
+        self
+    }
+}
+
+fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
     let string_char = none_of('"').or(just('\\').ignore_then(any()));
     just('"')
         .ignore_then(string_char.repeated())
@@ -13,45 +65,61 @@ fn string() -> impl Parser<char, String, Error = Simple<char>> + Clone {
         .map(|chars| chars.into_iter().collect())
 }
 
-pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
+pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clone {
     let ident = text::ident().padded();
     recursive(|expr| {
         let int = text::int(10)
-            .map(|s: String| Expr::Value(Value::I32(s.parse().unwrap())))
+            .map_with_span(|s: String, span| {
+                Span(Expr::Value(Value::I32(s.parse().unwrap())), span)
+            })
             .padded();
 
         let float = text::int(10)
             .then_ignore(just("."))
             .then(text::int(10))
-            .map(|(l, r)| Expr::Value(Value::F32(format!("{}.{}", l, r).parse().unwrap())));
+            .map_with_span(|(l, r), span| {
+                Span(
+                    Expr::Value(Value::F32(format!("{}.{}", l, r).parse().unwrap())),
+                    span,
+                )
+            });
 
         let bool = text::keyword("true")
             .to(true)
             .or(text::keyword("false").to(false))
-            .map(|b| Expr::Value(Value::Bool(b)));
+            .map_with_span(|b, span| Span(Expr::Value(Value::Bool(b)), span));
 
-        let string = string().map(|s| Expr::Value(Value::String(s)));
+        let string = string().map_with_span(|s, span| Span(Expr::Value(Value::String(s)), span));
 
         let fields = ident
+            .map_with_span(Span)
             .then_ignore(just(':'))
             .then(expr.clone())
             .separated_by(just(','))
             .delimited_by(just('{'), just('}'));
 
         let enum_literal = ident
-            .clone()
+            .map_with_span(Span)
             .then_ignore(just("::"))
-            .then(ident)
+            .then(ident.map_with_span(Span))
             .then(fields.clone())
-            .map(|((enum_name, variant_name), v)| Expr::Enum {
-                enum_name,
-                variant_name,
-                fields: v.into_iter().collect(),
+            .map_with_span(|((enum_name, variant_name), v), span| {
+                Span(
+                    Expr::Enum {
+                        enum_name,
+                        variant_name,
+                        fields: v.into_iter().collect(),
+                    },
+                    span,
+                )
             });
 
         let struct_literal = ident
+            .map_with_span(Span)
             .then(fields)
-            .map(|(name, fields)| Expr::Struct(name, fields.into_iter().collect()));
+            .map_with_span(|(name, fields), span| {
+                Span(Expr::Struct(name, fields.into_iter().collect()), span)
+            });
 
         let atom = float
             .or(int)
@@ -60,7 +128,7 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .or(string)
             .or(enum_literal)
             .or(struct_literal)
-            .or(ident.map(Expr::Variable))
+            .or(ident.map_with_span(|i, span| Span(Expr::Variable(i), span)))
             .padded();
 
         let args = expr
@@ -68,63 +136,92 @@ pub(crate) fn expr() -> impl Parser<char, Expr, Error = Simple<char>> + Clone {
             .separated_by(just(','))
             .allow_trailing()
             .delimited_by(just('('), just(')'))
-            .map(PostFix::Args);
+            .map_with_span(|args, span| Span(PostFix::Args(args), span));
 
-        let field = just('.').ignore_then(ident).map(PostFix::Field);
+        let field = just('.')
+            .ignore_then(ident.map_with_span(Span))
+            .map_with_span(|field, span| Span(PostFix::Field(field), span));
 
         let index = just('[')
             .ignore_then(expr.clone())
             .then_ignore(just(']'))
-            .map(Box::new)
-            .map(PostFix::Index);
+            .map_with_span(|index, span| Span(PostFix::Index(Box::new(index)), span));
 
         let call = atom
             .clone()
             .then(args.or(field).or(index).repeated())
-            .foldl(|callee, post_fix| Expr::PostFix(Box::new(callee), post_fix));
+            .foldl(|callee, post_fix| {
+                let span = (callee.1.start())..(post_fix.1.end());
+                Span(Expr::PostFix(Box::new(callee), post_fix), span)
+            });
 
         let op = |c| just(c).padded();
 
         let unary = op('-')
             .to(UnaryOp::Negate)
             .or(op('!').to(UnaryOp::Not))
+            .map_with_span(Span)
             .repeated()
             .then(call.or(atom))
-            .foldr(|op, rhs| Expr::Unary(op, Box::new(rhs)));
-
-        let div: fn(_, _) -> _ = |lhs, rhs| Expr::Binary(BinaryOp::Divide, lhs, rhs);
-        let mul: fn(_, _) -> _ = |lhs, rhs| Expr::Binary(BinaryOp::Multiply, lhs, rhs);
+            .foldr(|op, rhs| {
+                let span = (op.1.start())..(rhs.1.end());
+                Span(Expr::Unary(op, Box::new(rhs)), span)
+            });
 
         let product = unary
             .clone()
-            .then(op('*').to(mul).or(op('/').to(div)).then(unary).repeated())
-            .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
+            .then(
+                op('*')
+                    .map_with_span(|_, span| Span(BinaryOp::Multiply, span))
+                    .or(op('/').map_with_span(|_, span| Span(BinaryOp::Divide, span)))
+                    .then(unary)
+                    .repeated(),
+            )
+            .foldl(|lhs, (op, rhs)| {
+                let span = (lhs.1.start())..(rhs.1.end());
+                Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
+            });
 
-        let add: fn(_, _) -> _ = |lhs, rhs| Expr::Binary(BinaryOp::Add, lhs, rhs);
-        let sub: fn(_, _) -> _ = |lhs, rhs| Expr::Binary(BinaryOp::Subtract, lhs, rhs);
+        
 
         product
             .clone()
-            .then(op('+').to(add).or(op('-').to(sub)).then(product).repeated())
-            .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)))
+            .then(
+                op('+')
+                    .to(BinaryOp::Add)
+                    .or(op('-').to(BinaryOp::Subtract))
+                    .map_with_span(Span)
+                    .then(product)
+                    .repeated(),
+            )
+            .foldl(|lhs, (op, rhs)| {
+                let span = (lhs.1.start())..(rhs.1.end());
+                Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
+            })
     })
 }
 
-fn type_signature() -> impl Parser<char, TypeSig, Error = Simple<char>> + Clone {
-    ident().map(|id| match id.as_str() {
-        "i32" => TypeSig::I32,
-        "f32" => TypeSig::F32,
-        "string" => TypeSig::String,
-        "bool" => TypeSig::Bool,
-        _ => TypeSig::Named(id),
+fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Clone {
+    ident().map(|id| {
+        let sig = match id.0.as_str() {
+            "i32" => TypeSig::I32,
+            "f32" => TypeSig::F32,
+            "string" => TypeSig::String,
+            "bool" => TypeSig::Bool,
+            name => TypeSig::Named(name.to_string()),
+        };
+
+        Span(sig, id.1)
     })
 }
 
-fn ident() -> impl Parser<char, String, Error = Simple<char>> + Clone + Copy {
-    text::ident().padded()
+fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone + Copy {
+    text::ident()
+        .padded()
+        .map_with_span(Span)
 }
 
-fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = Simple<char>> {
+fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> {
     let ident = ident();
 
     let field = ident.then_ignore(just(':')).then(type_signature()).padded();
@@ -134,14 +231,14 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = Simple<char>
         .allow_trailing()
         .padded()
         .delimited_by(just('{'), just('}'))
-        .map(|fields| fields.into_iter().collect::<HashMap<_, _>>());
+        .map(|fields| fields.into_iter().collect::<Vec<_>>());
 
     let struct_declaration = text::keyword("struct")
-        .ignore_then(ident.clone())
+        .ignore_then(ident)
         .then(fields.clone())
         .map(|(name, fields)| TypeDeclaration::Struct { name, fields });
 
-    let enum_variant = ident.then(fields.or(empty().to(HashMap::new()))).padded();
+    let enum_variant = ident.then(fields.or(empty().to(Vec::new()))).padded();
 
     let enum_declaration = text::keyword("enum")
         .ignore_then(ident)
@@ -159,7 +256,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = Simple<char>
     enum_declaration.or(struct_declaration)
 }
 
-fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
+fn stmt() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
     recursive(|stmt| {
         let ident = ident();
 
@@ -190,14 +287,21 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
             .ignore_then(ident)
             .then(function_parameters)
             .then(optional_return_type)
-            .then(expr_block.clone())
-            .map(|(((name, params), return_type), body)| {
-                Stmt::Function(Function {
-                    name,
-                    params,
-                    return_type,
-                    body,
-                })
+            .then(
+                expr_block
+                    .clone()
+                    .map_with_span(Span),
+            )
+            .map_with_span(|(((name, params), return_type), body), span| {
+                Span(
+                    Stmt::Function(Function {
+                        name,
+                        params,
+                        return_type,
+                        body,
+                    }),
+                    span,
+                )
             });
 
         let let_decl = text::keyword("let")
@@ -205,24 +309,31 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
             .then_ignore(just('='))
             .then(expr().padded())
             .then_ignore(just(';'))
-            .map(|(ident, expr)| Stmt::Let(ident, expr));
+            .map_with_span(|(ident, expr), span| Span(Stmt::Let(ident, expr), span));
 
         let let_if_decl = text::keyword("let")
             .ignore_then(ident)
             .then_ignore(just('='))
             .then_ignore(text::keyword("if").padded())
             .then(expr())
-            .then(expr_block.clone())
+            .then(
+                expr_block
+                    .clone()
+                    .map_with_span(Span),
+            )
             .then_ignore(text::keyword("else"))
-            .then(expr_block)
-            .map(
-                |(((name, condition), then_block), else_block)| Stmt::LetIf {
-                    name,
-                    condition,
-                    then_block,
-                    else_block,
-                },
-            );
+            .then(expr_block.map_with_span(Span))
+            .map_with_span(|(((name, condition), then_block), else_block), span| {
+                Span(
+                    Stmt::LetIf {
+                        name,
+                        condition,
+                        then_block,
+                        else_block,
+                    },
+                    span,
+                )
+            });
 
         let block = stmt.repeated().delimited_by(just('{'), just('}'));
 
@@ -235,46 +346,59 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
             .ignore_then(expr())
             .then(block)
             .then(optional_else)
-            .map(|((condition, then_block), else_block)| Stmt::If {
-                condition,
-                then_block,
-                else_block,
+            .map_with_span(|((condition, then_block), else_block), span| {
+                Span(
+                    Stmt::If {
+                        condition,
+                        then_block,
+                        else_block,
+                    },
+                    span,
+                )
             });
 
         let import_stmt = text::keyword("import")
+            .padded()
             .ignore_then(
                 text::keyword("extern")
+                    .padded()
                     .to(ImportType::External)
-                    .or(empty().to(ImportType::Internal)),
+                    .or(empty().to(ImportType::Internal))
+                    .map_with_span(Span),
             )
-            .then(ident.clone().map(Some).or(empty().to(None)))
-            .then_ignore(just(',').to(()).or(empty()))
+            .then(ident.map(Some).or(empty().to(None)))
+            .then_ignore(just(',').padded().to(()).or(empty()))
             .then(
                 ident
-                    .clone()
                     .separated_by(just(','))
                     .allow_trailing()
                     .delimited_by(just('{'), just('}'))
                     .or(empty().to(Vec::new())),
             )
-            .then_ignore(text::keyword("from"))
-            .then(string())
+            .then_ignore(text::keyword("from").padded())
+            .then(string().map_with_span(Span))
             .then_ignore(just(';'))
-            .map(
-                |(((import_type, default_import), named_imports), module)| Stmt::Import {
-                    ty: import_type,
-                    default_import,
-                    named_imports,
-                    path: module,
+            .map_with_span(
+                |(((import_type, default_import), named_imports), module), span| {
+                    Span(
+                        Stmt::Import {
+                            ty: import_type,
+                            default_import,
+                            named_imports,
+                            path: module,
+                        },
+                        span,
+                    )
                 },
             );
 
-        let type_declaration = type_declaration().map(Stmt::Type);
+        let type_declaration =
+            type_declaration().map_with_span(|decl, span| Span(Stmt::Type(decl), span));
 
         let return_stmt = text::keyword("return")
             .ignore_then(expr().padded().map(Some).or(empty().to(None)))
             .then_ignore(just(';'))
-            .map(Stmt::Return);
+            .map_with_span(|expr, span| Span(Stmt::Return(expr), span));
 
         function_decl
             .or(let_if_decl)
@@ -283,16 +407,18 @@ fn stmt() -> impl Parser<char, Stmt, Error = Simple<char>> {
             .or(return_stmt)
             .or(import_stmt)
             .or(type_declaration)
-            .or(expr().then_ignore(just(';')).map(Stmt::Expr))
+            .or(expr()
+                .then_ignore(just(';'))
+                .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)))
             .padded()
     })
 }
 
-fn parser() -> impl Parser<char, Vec<Stmt>, Error = Simple<char>> {
+fn parser() -> impl Parser<char, Vec<Span<Stmt>>, Error = ParseError> {
     stmt().repeated().then_ignore(end())
 }
 
-pub fn parse(source: &str) -> (Option<Program>, Vec<Simple<char>>) {
+pub fn parse(source: &str) -> (Option<Program>, Vec<ParseError>) {
     let (output, errors) = parser().parse_recovery(source);
     let program = output.map(|statements| Program { statements });
 
@@ -302,468 +428,155 @@ pub fn parse(source: &str) -> (Option<Program>, Vec<Simple<char>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn test_parse_bool() {
-        assert_eq!(expr().parse("true"), Ok(Expr::Value(Value::Bool(true))));
-        assert_eq!(expr().parse("false"), Ok(Expr::Value(Value::Bool(false))));
+        insta::assert_yaml_snapshot!(expr().parse("true"));
+        insta::assert_yaml_snapshot!(expr().parse("false"));
     }
 
     #[test]
     fn test_parse_int() {
-        assert_eq!(expr().parse("10"), Ok(Expr::Value(Value::I32(10))));
-        assert_eq!(expr().parse("2"), Ok(Expr::Value(Value::I32(2))));
+        insta::assert_yaml_snapshot!(expr().parse("10"));
+        insta::assert_yaml_snapshot!(expr().parse("2"));
     }
 
     #[test]
     fn test_parse_float() {
-        assert_eq!(expr().parse("10.5"), Ok(Expr::Value(Value::F32(10.5))));
-        assert_eq!(expr().parse("2.1"), Ok(Expr::Value(Value::F32(2.1))));
+        insta::assert_yaml_snapshot!(expr().parse("10.5"));
+        insta::assert_yaml_snapshot!(expr().parse("2.1"));
     }
 
     #[test]
     fn test_parse_variable() {
-        assert_eq!(expr().parse("abcd"), Ok(Expr::Variable("abcd".to_string())));
-        assert_eq!(
-            expr().parse("foo_bar"),
-            Ok(Expr::Variable("foo_bar".to_string()))
-        );
-        assert_eq!(
-            expr().parse("fooBar"),
-            Ok(Expr::Variable("fooBar".to_string()))
-        );
-        assert_eq!(
-            expr().parse("_fooBar"),
-            Ok(Expr::Variable("_fooBar".to_string()))
-        );
-        assert_eq!(expr().parse("_"), Ok(Expr::Variable("_".to_string())));
-        assert_eq!(expr().parse("a3"), Ok(Expr::Variable("a3".to_string())));
+        insta::assert_yaml_snapshot!(expr().parse("abcd"));
+        insta::assert_yaml_snapshot!(expr().parse("foo_bar"));
+        insta::assert_yaml_snapshot!(expr().parse("fooBar"));
+        insta::assert_yaml_snapshot!(expr().parse("_fooBar"));
+        insta::assert_yaml_snapshot!(expr().parse("_"));
+        insta::assert_yaml_snapshot!(expr().parse("a3"));
     }
 
     #[test]
     fn test_parse_struct_literal() {
-        assert_eq!(
-            expr().parse("Foo { a: 10, b: 20 }"),
-            Ok(Expr::Struct(
-                "Foo".to_string(),
-                vec![
-                    ("a".to_string(), Expr::Value(Value::I32(10))),
-                    ("b".to_string(), Expr::Value(Value::I32(20))),
-                ]
-                .into_iter()
-                .collect()
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("Foo { a: 10, b: 20 }"));
 
-        assert_eq!(
-            expr().parse("Foo::Bar { a: 10, b: 20 }"),
-            Ok(Expr::Enum {
-                enum_name: "Foo".to_string(),
-                variant_name: "Bar".to_string(),
-                fields: vec![
-                    ("a".to_string(), Expr::Value(Value::I32(10))),
-                    ("b".to_string(), Expr::Value(Value::I32(20))),
-                ]
-                .into_iter()
-                .collect()
-            })
-        );
+        insta::assert_yaml_snapshot!(expr().parse("Foo::Bar { a: 10, b: 20 }"));
     }
 
     #[test]
     fn test_parse_unary() {
-        assert_eq!(
-            expr().parse("-10"),
-            Ok(Expr::Unary(
-                UnaryOp::Negate,
-                Box::new(Expr::Value(Value::I32(10)))
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("-10"));
 
-        assert_eq!(
-            expr().parse("!bar"),
-            Ok(Expr::Unary(
-                UnaryOp::Not,
-                Box::new(Expr::Variable("bar".to_string()))
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("!bar"));
 
-        assert_eq!(
-            expr().parse("-!10"),
-            Ok(Expr::Unary(
-                UnaryOp::Negate,
-                Box::new(Expr::Unary(
-                    UnaryOp::Not,
-                    Box::new(Expr::Value(Value::I32(10)))
-                ))
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("-!10"));
     }
 
     #[test]
     fn test_parse_multiply() {
-        assert_eq!(
-            expr().parse("10 * 11"),
-            Ok(Expr::Binary(
-                BinaryOp::Multiply,
-                Box::new(Expr::Value(Value::I32(10))),
-                Box::new(Expr::Value(Value::I32(11)))
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("10 * 11"));
 
-        assert_eq!(
-            expr().parse("10 / 11"),
-            Ok(Expr::Binary(
-                BinaryOp::Divide,
-                Box::new(Expr::Value(Value::I32(10))),
-                Box::new(Expr::Value(Value::I32(11)))
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("10 / 11"));
 
-        assert_eq!(
-            expr().parse("10 / 11 / 12"),
-            Ok(Expr::Binary(
-                BinaryOp::Divide,
-                Box::new(Expr::Binary(
-                    BinaryOp::Divide,
-                    Box::new(Expr::Value(Value::I32(10))),
-                    Box::new(Expr::Value(Value::I32(11)))
-                )),
-                Box::new(Expr::Value(Value::I32(12)),)
-            ))
-        )
+        insta::assert_yaml_snapshot!(expr().parse("10 / 11 / 12"));
     }
 
     #[test]
     fn test_parse_addition() {
-        assert_eq!(
-            expr().parse("10 + 11"),
-            Ok(Expr::Binary(
-                BinaryOp::Add,
-                Box::new(Expr::Value(Value::I32(10))),
-                Box::new(Expr::Value(Value::I32(11)),)
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("10 + 11"));
 
-        assert_eq!(
-            expr().parse("10 - 11"),
-            Ok(Expr::Binary(
-                BinaryOp::Subtract,
-                Box::new(Expr::Value(Value::I32(10))),
-                Box::new(Expr::Value(Value::I32(11)),)
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("10 - 11"));
     }
 
     #[test]
     fn test_parse_parens() {
-        assert_eq!(
-            expr().parse("foo + (11 * 2)"),
-            Ok(Expr::Binary(
-                BinaryOp::Add,
-                Box::new(Expr::Variable("foo".to_string())),
-                Box::new(Expr::Binary(
-                    BinaryOp::Multiply,
-                    Box::new(Expr::Value(Value::I32(11))),
-                    Box::new(Expr::Value(Value::I32(2)))
-                ))
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("foo + (11 * 2)"));
 
-        assert_eq!(
-            expr().parse("(10 - 11)"),
-            Ok(Expr::Binary(
-                BinaryOp::Subtract,
-                Box::new(Expr::Value(Value::I32(10))),
-                Box::new(Expr::Value(Value::I32(11)),)
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("(10 - 11)"));
     }
 
     #[test]
     fn test_parse_call() {
-        assert_eq!(
-            expr().parse("foo()"),
-            Ok(Expr::PostFix(
-                Box::new(Expr::Variable("foo".to_string())),
-                PostFix::Args(vec![]),
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("foo()"));
 
-        assert_eq!(
-            expr().parse("foo(10)"),
-            Ok(Expr::PostFix(
-                Box::new(Expr::Variable("foo".to_string())),
-                PostFix::Args(vec![Expr::Value(Value::I32(10))]),
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("foo(10)"));
 
-        assert_eq!(
-            expr().parse("foo(10)(20)"),
-            Ok(Expr::PostFix(
-                Box::new(Expr::PostFix(
-                    Box::new(Expr::Variable("foo".to_string())),
-                    PostFix::Args(vec![Expr::Value(Value::I32(10))]),
-                )),
-                PostFix::Args(vec![Expr::Value(Value::I32(20))]),
-            ))
-        );
+        insta::assert_yaml_snapshot!(expr().parse("foo(10)(20)"));
     }
 
     #[test]
     fn test_parse_function() {
-        assert_eq!(
-            stmt().parse("fn foo() { 20 }"),
-            Ok(Stmt::Function(Function {
-                name: "foo".to_string(),
-                params: vec![],
-                return_type: None,
-                body: ExprBlock {
-                    stmts: vec![],
-                    end_expr: Some(Expr::Value(Value::I32(20))),
-                },
-            }))
-        );
+        insta::assert_yaml_snapshot!(stmt().parse("fn foo() { 20 }"));
 
-        assert_eq!(
-            stmt().parse("fn foo() -> i32 { 20 }"),
-            Ok(Stmt::Function(Function {
-                name: "foo".to_string(),
-                params: vec![],
-                return_type: Some(TypeSig::I32),
-                body: ExprBlock {
-                    stmts: vec![],
-                    end_expr: Some(Expr::Value(Value::I32(20))),
-                },
-            }))
-        );
+        insta::assert_yaml_snapshot!(stmt().parse("fn foo() -> i32 { 20 }"));
 
-        assert_eq!(
-            stmt().parse("fn foo() { let name = 10; }"),
-            Ok(Stmt::Function(Function {
-                name: "foo".to_string(),
-                params: vec![],
-                return_type: None,
-                body: ExprBlock {
-                    stmts: vec![Stmt::Let("name".to_string(), Expr::Value(Value::I32(10)))],
-                    end_expr: None,
-                },
-            }))
-        );
+        insta::assert_yaml_snapshot!(stmt().parse("fn foo() { let name = 10; }"));
     }
 
     #[test]
     fn test_parse_statement() {
-        assert_eq!(
-            stmt().parse("let a = 10;"),
-            Ok(Stmt::Let("a".to_string(), Expr::Value(Value::I32(10))))
-        );
+        insta::assert_yaml_snapshot!(stmt().parse("let a = 10;"));
 
-        assert_eq!(
-            stmt().parse("let a = if b { 10 } else { 20 }"),
-            Ok(Stmt::LetIf {
-                name: "a".to_string(),
-                condition: Expr::Variable("b".to_string()),
-                then_block: ExprBlock {
-                    stmts: vec![],
-                    end_expr: Some(Expr::Value(Value::I32(10)))
-                },
-                else_block: ExprBlock {
-                    stmts: vec![],
-                    end_expr: Some(Expr::Value(Value::I32(20)))
-                },
-            })
-        );
+        insta::assert_yaml_snapshot!(stmt().parse("let a = if b { 10 } else { 20 }"));
 
-        assert_eq!(
-            stmt().repeated().parse(
-                "let a = if b { 10 } else { 20 }
+        insta::assert_yaml_snapshot!(stmt().repeated().parse(
+            "let a = if b { 10 } else { 20 }
             10 + 11;
             let h = foobar;"
-            ),
-            Ok(vec![
-                Stmt::LetIf {
-                    name: "a".to_string(),
-                    condition: Expr::Variable("b".to_string()),
-                    then_block: ExprBlock {
-                        stmts: vec![],
-                        end_expr: Some(Expr::Value(Value::I32(10)))
-                    },
-                    else_block: ExprBlock {
-                        stmts: vec![],
-                        end_expr: Some(Expr::Value(Value::I32(20)))
-                    },
-                },
-                Stmt::Expr(Expr::Binary(
-                    BinaryOp::Add,
-                    Box::new(Expr::Value(Value::I32(10))),
-                    Box::new(Expr::Value(Value::I32(11)))
-                )),
-                Stmt::Let("h".to_string(), Expr::Variable("foobar".to_string()))
-            ])
-        )
+        ))
     }
 
     #[test]
     fn test_parse_if_statement() {
-        assert_eq!(
-            stmt().parse(
-                "if b {
+        insta::assert_yaml_snapshot!(stmt().parse(
+            "if b {
                let a = 10;
              } else {
                let b = 20;
              }"
-            ),
-            Ok(Stmt::If {
-                condition: Expr::Variable("b".to_string()),
-                then_block: vec![Stmt::Let("a".to_string(), Expr::Value(Value::I32(10)))],
-                else_block: vec![Stmt::Let("b".to_string(), Expr::Value(Value::I32(20)))],
-            })
-        );
+        ));
 
-        assert_eq!(
-            stmt().parse("if b { 10; }"),
-            Ok(Stmt::If {
-                condition: Expr::Variable("b".to_string()),
-                then_block: vec![Stmt::Expr(Expr::Value(Value::I32(10)))],
-                else_block: vec![],
-            })
-        );
+        insta::assert_yaml_snapshot!(stmt().parse("if b { 10; }"));
     }
 
     #[test]
     fn test_parse_import_statement() {
-        assert_eq!(
-            stmt().parse(r#"import foo from "./bar";"#),
-            Ok(Stmt::Import {
-                ty: ImportType::Internal,
-                default_import: Some("foo".to_string()),
-                named_imports: Vec::new(),
-                path: "./bar".to_string(),
-            })
-        );
+        insta::assert_yaml_snapshot!(stmt().parse(r#"import foo from "./bar";"#));
 
-        assert_eq!(
-            stmt().parse(r#"import { foo, bar } from "./baz";"#),
-            Ok(Stmt::Import {
-                ty: ImportType::Internal,
-                default_import: None,
-                named_imports: vec!["foo".to_string(), "bar".to_string()],
-                path: "./baz".to_string(),
-            })
-        );
+        insta::assert_yaml_snapshot!(stmt().parse(r#"import { foo, bar } from "./baz";"#));
 
-        assert_eq!(
-            stmt().parse(r#"import qux, { foo, bar } from "./baz";"#),
-            Ok(Stmt::Import {
-                ty: ImportType::Internal,
-                default_import: Some("qux".to_string()),
-                named_imports: vec!["foo".to_string(), "bar".to_string()],
-                path: "./baz".to_string(),
-            })
-        );
+        insta::assert_yaml_snapshot!(stmt().parse(r#"import qux, { foo, bar } from "./baz";"#));
 
-        assert_eq!(
-            stmt().parse(r#"import extern { foo, bar } from "https://example.com/baz";"#),
-            Ok(Stmt::Import {
-                ty: ImportType::External,
-                default_import: None,
-                named_imports: vec!["foo".to_string(), "bar".to_string()],
-                path: "https://example.com/baz".to_string(),
-            })
+        insta::assert_yaml_snapshot!(
+            stmt().parse(r#"import extern { foo, bar } from "https://example.com/baz";"#)
         );
     }
 
     #[test]
     fn test_parse_return_statement() {
-        assert_eq!(
-            stmt().parse("return 10;"),
-            Ok(Stmt::Return(Some(Expr::Value(Value::I32(10)))))
-        );
+        insta::assert_yaml_snapshot!(stmt().parse("return 10;"));
 
-        assert_eq!(stmt().parse("return;"), Ok(Stmt::Return(None)));
+        insta::assert_yaml_snapshot!(stmt().parse("return;"));
     }
 
     #[test]
     fn test_parse_struct_declaration() {
-        assert_eq!(
-            type_declaration().parse("struct Foo { a: i32, b: i32 }"),
-            Ok(TypeDeclaration::Struct {
-                name: "Foo".to_string(),
-                fields: vec![
-                    ("a".to_string(), TypeSig::I32),
-                    ("b".to_string(), TypeSig::I32),
-                ]
-                .into_iter()
-                .collect(),
-            })
-        );
+        insta::assert_yaml_snapshot!(type_declaration().parse("struct Foo { a: i32, b: i32 }"));
 
-        assert_eq!(
-            type_declaration().parse("struct Foo {}"),
-            Ok(TypeDeclaration::Struct {
-                name: "Foo".to_string(),
-                fields: HashMap::new(),
-            })
-        );
+        insta::assert_yaml_snapshot!(type_declaration().parse("struct Foo {}"));
 
-        assert_eq!(
-            type_declaration().parse("struct Foo { a: i32 }"),
-            Ok(TypeDeclaration::Struct {
-                name: "Foo".to_string(),
-                fields: vec![("a".to_string(), TypeSig::I32)].into_iter().collect(),
-            })
-        );
+        insta::assert_yaml_snapshot!(type_declaration().parse("struct Foo { a: i32 }"));
 
-        assert_eq!(
-            type_declaration().parse("struct Foo { a: i32, }"),
-            Ok(TypeDeclaration::Struct {
-                name: "Foo".to_string(),
-                fields: vec![("a".to_string(), TypeSig::I32)].into_iter().collect(),
-            })
-        );
+        insta::assert_yaml_snapshot!(type_declaration().parse("struct Foo { a: i32, }"));
     }
 
     #[test]
     fn test_parse_enum_declaration() {
-        assert_eq!(
-            type_declaration().parse("enum Foo { A, B, C }"),
-            Ok(TypeDeclaration::Enum {
-                name: "Foo".to_string(),
-                variants: vec![
-                    ("A".to_string(), HashMap::new()),
-                    ("B".to_string(), HashMap::new()),
-                    ("C".to_string(), HashMap::new())
-                ]
-                .into_iter()
-                .collect()
-            })
-        );
+        insta::assert_yaml_snapshot!(type_declaration().parse("enum Foo { A, B, C }"));
 
-        assert_eq!(
-            type_declaration().parse("enum Foo { A }"),
-            Ok(TypeDeclaration::Enum {
-                name: "Foo".to_string(),
-                variants: vec![("A".to_string(), HashMap::new())]
-                    .into_iter()
-                    .collect()
-            })
-        );
+        insta::assert_yaml_snapshot!(type_declaration().parse("enum Foo { A }"));
 
-        assert_eq!(
-            type_declaration().parse("enum Foo { A { foo: string } }"),
-            Ok(TypeDeclaration::Enum {
-                name: "Foo".to_string(),
-                variants: vec![(
-                    "A".to_string(),
-                    vec![("foo".to_string(), TypeSig::String)]
-                        .into_iter()
-                        .collect()
-                )]
-                .into_iter()
-                .collect()
-            })
-        );
+        insta::assert_yaml_snapshot!(type_declaration().parse("enum Foo { A { foo: string } }"));
     }
 }

@@ -1,0 +1,13 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "stmt().parse(\"return 10;\")"
+---
+Ok:
+  - Return:
+      - Value:
+          I32: 10
+      - start: 7
+        end: 9
+  - start: 0
+    end: 10
+

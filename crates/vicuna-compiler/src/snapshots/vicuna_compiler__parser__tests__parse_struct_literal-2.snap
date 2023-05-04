@@ -1,0 +1,32 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "expr().parse(\"Foo::Bar { a: 10, b: 20 }\")"
+---
+Ok:
+  - Enum:
+      enum_name:
+        - Foo
+        - start: 0
+          end: 3
+      variant_name:
+        - Bar
+        - start: 5
+          end: 9
+      fields:
+        - - - a
+            - start: 10
+              end: 12
+          - - Value:
+                I32: 10
+            - start: 14
+              end: 16
+        - - - b
+            - start: 17
+              end: 19
+          - - Value:
+                I32: 20
+            - start: 21
+              end: 23
+  - start: 0
+    end: 25
+

@@ -1,34 +1,41 @@
 use serde::Serialize;
-use std::collections::HashMap;
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::ops::Range;
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct Program {
-    pub statements: Vec<Stmt>,
+    pub statements: Vec<Span<Stmt>>,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Span<T: Debug + Clone + PartialEq + Serialize>(pub T, pub Range<usize>);
+
+impl<T: Debug + Clone + PartialEq + Serialize + Hash> Eq for Span<T> {}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum TypeDeclaration {
     Struct {
-        name: String,
-        fields: HashMap<String, TypeSig>,
+        name: Span<String>,
+        fields: Vec<(Span<String>, Span<TypeSig>)>,
     },
     Enum {
-        name: String,
-        variants: HashMap<String, HashMap<String, TypeSig>>,
+        name: Span<String>,
+        variants: Vec<(Span<String>, Vec<(Span<String>, Span<TypeSig>)>)>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Function {
-    pub name: String,
-    pub params: Vec<(String, TypeSig)>,
-    pub return_type: Option<TypeSig>,
-    pub body: ExprBlock,
+    pub name: Span<String>,
+    pub params: Vec<(Span<String>, Span<TypeSig>)>,
+    pub return_type: Option<Span<TypeSig>>,
+    pub body: Span<ExprBlock>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Stmt {
-    Let(String, Expr),
+    Let(Span<String>, Span<Expr>),
     Function(Function),
     // Let assigned to an if expression.
     // ```
@@ -39,23 +46,23 @@ pub enum Stmt {
     //  }
     // ```
     LetIf {
-        name: String,
-        condition: Expr,
-        then_block: ExprBlock,
-        else_block: ExprBlock,
+        name: Span<String>,
+        condition: Span<Expr>,
+        then_block: Span<ExprBlock>,
+        else_block: Span<ExprBlock>,
     },
-    Expr(Expr),
+    Expr(Span<Expr>),
     If {
-        condition: Expr,
-        then_block: Vec<Stmt>,
-        else_block: Vec<Stmt>,
+        condition: Span<Expr>,
+        then_block: Vec<Span<Stmt>>,
+        else_block: Vec<Span<Stmt>>,
     },
-    Return(Option<Expr>),
+    Return(Option<Span<Expr>>),
     Import {
-        ty: ImportType,
-        default_import: Option<String>,
-        named_imports: Vec<String>,
-        path: String,
+        ty: Span<ImportType>,
+        default_import: Option<Span<String>>,
+        named_imports: Vec<Span<String>>,
+        path: Span<String>,
     },
     Type(TypeDeclaration),
 }
@@ -70,8 +77,8 @@ pub enum ImportType {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ExprBlock {
-    pub stmts: Vec<Stmt>,
-    pub end_expr: Option<Expr>,
+    pub stmts: Vec<Span<Stmt>>,
+    pub end_expr: Option<Span<Expr>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -81,22 +88,22 @@ pub enum Expr {
     // Combination of call, i.e. `foo(10)`, field access, i.e. `foo.bar`,
     // and index access, i.e. `foo[10]`.
     // This could probably be optimized by storing `PostFix` as a Vec
-    PostFix(Box<Expr>, PostFix),
-    Binary(BinaryOp, Box<Expr>, Box<Expr>),
-    Unary(UnaryOp, Box<Expr>),
-    Struct(String, HashMap<String, Expr>),
+    PostFix(Box<Span<Expr>>, Span<PostFix>),
+    Binary(Span<BinaryOp>, Box<Span<Expr>>, Box<Span<Expr>>),
+    Unary(Span<UnaryOp>, Box<Span<Expr>>),
+    Struct(Span<String>, Vec<(Span<String>, Span<Expr>)>),
     Enum {
-        enum_name: String,
-        variant_name: String,
-        fields: HashMap<String, Expr>,
+        enum_name: Span<String>,
+        variant_name: Span<String>,
+        fields: Vec<(Span<String>, Span<Expr>)>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum PostFix {
-    Field(String),
-    Index(Box<Expr>),
-    Args(Vec<Expr>),
+    Field(Span<String>),
+    Index(Box<Span<Expr>>),
+    Args(Vec<Span<Expr>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -107,6 +114,8 @@ pub enum TypeSig {
     Bool,
     Named(String),
 }
+
+impl Eq for TypeSig {}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Value {

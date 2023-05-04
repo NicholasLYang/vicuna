@@ -1,0 +1,10 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "expr().parse(\"10\")"
+---
+Ok:
+  - Value:
+      I32: 10
+  - start: 0
+    end: 2
+

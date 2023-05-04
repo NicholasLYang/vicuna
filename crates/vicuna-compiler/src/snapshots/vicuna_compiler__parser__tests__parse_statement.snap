@@ -1,0 +1,16 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "stmt().parse(\"let a = 10;\")"
+---
+Ok:
+  - Let:
+      - - a
+        - start: 3
+          end: 6
+      - - Value:
+            I32: 10
+        - start: 8
+          end: 10
+  - start: 0
+    end: 11
+

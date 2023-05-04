@@ -1,0 +1,19 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "expr().parse(\"foo(10)\")"
+---
+Ok:
+  - PostFix:
+      - - Variable: foo
+        - start: 0
+          end: 3
+      - - Args:
+            - - Value:
+                  I32: 10
+              - start: 4
+                end: 6
+        - start: 3
+          end: 7
+  - start: 0
+    end: 7
+

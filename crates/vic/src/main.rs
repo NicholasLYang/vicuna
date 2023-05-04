@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use miette::Report;
 use std::fs;
 use vicuna_compiler::compile;
 
@@ -17,7 +18,10 @@ enum Command {
 fn build(source_path: String) -> Result<String> {
     let source = fs::read_to_string(source_path)?;
     let output = compile(&source)?;
-    for type_error in output.type_errors {
+    for parse_error in output.errors.parse_errors {
+        eprintln!("{:?}", parse_error);
+    }
+    for type_error in output.errors.type_errors {
         eprintln!("{:?}", type_error);
     }
 
@@ -30,9 +34,15 @@ fn run(source_path: String) -> Result<()> {
     Ok(())
 }
 
-// TODO: Only type-check and don't compile
 fn check(source_path: String) -> Result<()> {
-    build(source_path)?;
+    let source = fs::read_to_string(source_path)?;
+    let output = vicuna_compiler::check(&source)?;
+    for parse_error in output.errors.parse_errors {
+        eprintln!("{:?}", Report::new(parse_error));
+    }
+    for type_error in output.errors.type_errors {
+        eprintln!("{:?}", Report::new(type_error));
+    }
 
     Ok(())
 }

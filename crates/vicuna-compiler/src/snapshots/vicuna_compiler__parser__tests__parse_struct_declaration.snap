@@ -1,0 +1,24 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "type_declaration().parse(\"struct Foo { a: i32, b: i32 }\")"
+---
+Ok:
+  Struct:
+    name:
+      - Foo
+      - start: 6
+        end: 11
+    fields:
+      - - - a
+          - start: 13
+            end: 14
+        - - I32
+          - start: 15
+            end: 19
+      - - - b
+          - start: 21
+            end: 22
+        - - I32
+          - start: 23
+            end: 28
+

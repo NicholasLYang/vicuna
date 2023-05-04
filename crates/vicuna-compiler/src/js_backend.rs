@@ -1,4 +1,6 @@
-use crate::ast::{BinaryOp, Expr, Function, ImportType, PostFix, Program, Stmt, UnaryOp, Value};
+use crate::ast::{
+    BinaryOp, Expr, Function, ImportType, PostFix, Program, Span, Stmt, UnaryOp, Value,
+};
 use anyhow::Result;
 use std::io::Write;
 
@@ -19,10 +21,10 @@ impl<T: Write> JsBackend<T> {
         Ok(())
     }
 
-    fn emit_stmt(&mut self, stmt: &Stmt) -> Result<()> {
-        match stmt {
+    fn emit_stmt(&mut self, stmt: &Span<Stmt>) -> Result<()> {
+        match &stmt.0 {
             Stmt::Let(name, rhs) => {
-                write!(self.output, "let {} = ", name)?;
+                write!(self.output, "let {} = ", name.0)?;
                 self.emit_expr(rhs)?;
                 self.output.write_all(b";\n")?;
             }
@@ -32,24 +34,24 @@ impl<T: Write> JsBackend<T> {
                 then_block,
                 else_block,
             } => {
-                writeln!(self.output, "let {};", name)?;
+                writeln!(self.output, "let {};", name.0)?;
                 write!(self.output, "if (")?;
                 self.emit_expr(condition)?;
                 writeln!(self.output, ") {{")?;
-                for stmt in &then_block.stmts {
+                for stmt in &then_block.0.stmts {
                     self.emit_stmt(stmt)?;
                 }
-                if let Some(end_expr) = &then_block.end_expr {
-                    write!(self.output, "{} = ", name)?;
+                if let Some(end_expr) = &then_block.0.end_expr {
+                    write!(self.output, "{} = ", name.0)?;
                     self.emit_expr(end_expr)?;
                     writeln!(self.output, ";")?;
                 }
                 writeln!(self.output, "}} else {{")?;
-                for stmt in &else_block.stmts {
+                for stmt in &else_block.0.stmts {
                     self.emit_stmt(stmt)?;
                 }
-                if let Some(end_expr) = &else_block.end_expr {
-                    write!(self.output, "{} = ", name)?;
+                if let Some(end_expr) = &else_block.0.end_expr {
+                    write!(self.output, "{} = ", name.0)?;
                     self.emit_expr(end_expr)?;
                     writeln!(self.output, ";")?;
                 }
@@ -62,19 +64,19 @@ impl<T: Write> JsBackend<T> {
             Stmt::Function(Function {
                 name, params, body, ..
             }) => {
-                write!(self.output, "function {}(", name)?;
+                write!(self.output, "function {}(", name.0)?;
                 for (idx, (arg, _)) in params.iter().enumerate() {
-                    self.output.write_all(arg.as_bytes())?;
+                    self.output.write_all(arg.0.as_bytes())?;
                     if idx != params.len() - 1 {
                         self.output.write_all(b", ")?;
                     }
                 }
                 writeln!(self.output, ") {{")?;
-                for stmt in &body.stmts {
+                for stmt in &body.0.stmts {
                     self.emit_stmt(stmt)?;
                 }
 
-                if let Some(end_expr) = &body.end_expr {
+                if let Some(end_expr) = &body.0.end_expr {
                     self.output.write_all(b"return ")?;
                     self.emit_expr(end_expr)?;
                     self.output.write_all(b";\n")?;
@@ -108,14 +110,14 @@ impl<T: Write> JsBackend<T> {
                 self.output.write_all(b";\n")?;
             }
             Stmt::Import {
-                ty: ImportType::External,
+                ty: Span(ImportType::External, _),
                 default_import,
                 named_imports,
                 path,
             } => {
                 self.output.write_all(b"import ")?;
                 if let Some(default_import) = default_import {
-                    self.output.write_all(default_import.as_bytes())?;
+                    self.output.write_all(default_import.0.as_bytes())?;
                 }
                 if !named_imports.is_empty() {
                     if default_import.is_some() {
@@ -124,7 +126,7 @@ impl<T: Write> JsBackend<T> {
 
                     self.output.write_all(b"{ ")?;
                     for (idx, name) in named_imports.iter().enumerate() {
-                        self.output.write_all(name.as_bytes())?;
+                        self.output.write_all(name.0.as_bytes())?;
                         if idx != named_imports.len() - 1 {
                             self.output.write_all(b", ")?;
                         }
@@ -133,7 +135,7 @@ impl<T: Write> JsBackend<T> {
                 }
 
                 self.output.write_all(b" from \"")?;
-                self.output.write_all(path.as_bytes())?;
+                self.output.write_all(path.0.as_bytes())?;
                 self.output.write_all(b"\";\n")?;
             }
             // TODO: Add TypeScript type generation
@@ -143,8 +145,8 @@ impl<T: Write> JsBackend<T> {
         Ok(())
     }
 
-    fn emit_expr(&mut self, expr: &Expr) -> Result<()> {
-        match expr {
+    fn emit_expr(&mut self, expr: &Span<Expr>) -> Result<()> {
+        match &expr.0 {
             Expr::Value(value) => {
                 self.emit_value(value)?;
             }
@@ -156,7 +158,7 @@ impl<T: Write> JsBackend<T> {
                     self.output.write_all(name.as_bytes())?;
                 }
             }
-            Expr::PostFix(callee, PostFix::Args(args)) => {
+            Expr::PostFix(callee, Span(PostFix::Args(args), _)) => {
                 self.emit_expr(callee)?;
                 self.output.write_all(b"(")?;
                 let arity = args.len();
@@ -168,19 +170,19 @@ impl<T: Write> JsBackend<T> {
                 }
                 self.output.write_all(b")")?;
             }
-            Expr::PostFix(callee, PostFix::Index(index)) => {
+            Expr::PostFix(callee, Span(PostFix::Index(index), _)) => {
                 self.emit_expr(callee)?;
                 self.output.write_all(b"[")?;
                 self.emit_expr(index)?;
                 self.output.write_all(b"]")?;
             }
-            Expr::PostFix(callee, PostFix::Field(name)) => {
+            Expr::PostFix(callee, Span(PostFix::Field(name), _)) => {
                 self.emit_expr(callee)?;
                 self.output.write_all(b".")?;
-                self.output.write_all(name.as_bytes())?;
+                self.output.write_all(name.0.as_bytes())?;
             }
             Expr::Binary(op, lhs, rhs) => {
-                let op_str = match op {
+                let op_str = match op.0 {
                     BinaryOp::Add => b"+",
                     BinaryOp::Subtract => b"-",
                     BinaryOp::Divide => b"/",
@@ -192,7 +194,7 @@ impl<T: Write> JsBackend<T> {
                 self.emit_expr(rhs)?;
             }
             Expr::Unary(op, rhs) => {
-                let op_str = match op {
+                let op_str = match op.0 {
                     UnaryOp::Negate => b'-',
                     UnaryOp::Not => b'!',
                 };
@@ -202,7 +204,7 @@ impl<T: Write> JsBackend<T> {
             Expr::Struct(_, fields) => {
                 self.output.write_all(b"{")?;
                 for (i, (name, value)) in fields.iter().enumerate() {
-                    self.output.write_all(name.as_bytes())?;
+                    self.output.write_all(name.0.as_bytes())?;
                     self.output.write_all(b": ")?;
                     self.emit_expr(value)?;
                     if i < fields.len() - 1 {
@@ -218,10 +220,10 @@ impl<T: Write> JsBackend<T> {
             } => {
                 self.output.write_all(b"{")?;
                 self.output.write_all(b" \"__type__\": \"")?;
-                self.output.write_all(variant_name.as_bytes())?;
+                self.output.write_all(variant_name.0.as_bytes())?;
                 self.output.write_all(b"\", ")?;
                 for (i, (name, value)) in fields.iter().enumerate() {
-                    self.output.write_all(name.as_bytes())?;
+                    self.output.write_all(name.0.as_bytes())?;
                     self.output.write_all(b": ")?;
                     self.emit_expr(value)?;
                     if i < fields.len() - 1 {

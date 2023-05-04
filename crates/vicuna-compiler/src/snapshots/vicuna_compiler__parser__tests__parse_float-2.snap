@@ -1,0 +1,10 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "expr().parse(\"2.1\")"
+---
+Ok:
+  - Value:
+      F32: 2.1
+  - start: 0
+    end: 3
+

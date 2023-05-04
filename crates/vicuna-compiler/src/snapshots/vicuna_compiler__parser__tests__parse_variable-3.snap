@@ -1,0 +1,9 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "expr().parse(\"fooBar\")"
+---
+Ok:
+  - Variable: fooBar
+  - start: 0
+    end: 6
+

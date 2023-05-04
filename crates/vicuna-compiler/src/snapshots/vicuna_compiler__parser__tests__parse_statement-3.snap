@@ -1,0 +1,61 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "stmt().repeated().parse(\"let a = if b { 10 } else { 20 }\n            10 + 11;\n            let h = foobar;\")"
+---
+Ok:
+  - - LetIf:
+        name:
+          - a
+          - start: 3
+            end: 6
+        condition:
+          - Variable: b
+          - start: 11
+            end: 13
+        then_block:
+          - stmts: []
+            end_expr:
+              - Value:
+                  I32: 10
+              - start: 15
+                end: 17
+          - start: 13
+            end: 20
+        else_block:
+          - stmts: []
+            end_expr:
+              - Value:
+                  I32: 20
+              - start: 27
+                end: 29
+          - start: 24
+            end: 44
+    - start: 0
+      end: 44
+  - - Expr:
+        - Binary:
+            - - Add
+              - start: 47
+                end: 49
+            - - Value:
+                  I32: 10
+              - start: 44
+                end: 46
+            - - Value:
+                  I32: 11
+              - start: 49
+                end: 51
+        - start: 44
+          end: 51
+    - start: 44
+      end: 52
+  - - Let:
+        - - h
+          - start: 68
+            end: 71
+        - - Variable: foobar
+          - start: 73
+            end: 79
+    - start: 65
+      end: 80
+

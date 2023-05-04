@@ -1,0 +1,20 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "expr().parse(\"(10 - 11)\")"
+---
+Ok:
+  - Binary:
+      - - Subtract
+        - start: 4
+          end: 6
+      - - Value:
+            I32: 10
+        - start: 1
+          end: 3
+      - - Value:
+            I32: 11
+        - start: 6
+          end: 8
+  - start: 1
+    end: 8
+
