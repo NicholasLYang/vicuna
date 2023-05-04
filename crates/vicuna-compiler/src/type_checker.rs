@@ -582,7 +582,7 @@ impl TypeChecker {
             } => {
                 let enum_variants = self.defined_enums.lookup(&enum_name.0);
 
-                let Some(variant_fields) = enum_variants.and_then(|enum_variants| enum_variants.iter().find(|(name, _)| &name.0 == &variant_name.0)).cloned() else {
+                let Some(variant_fields) = enum_variants.and_then(|enum_variants| enum_variants.iter().find(|(name, _)| name.0 == variant_name.0)).cloned() else {
                     self.errors.push(TypeError::UndefinedVariant {
                         enum_name: enum_name.0.clone(),
                         variant_name: variant_name.0.clone(),
@@ -619,7 +619,7 @@ impl TypeChecker {
     ) -> Option<()> {
         if literal_fields.len() != struct_type_fields.len() {
             let struct_type_fields = struct_type_fields.clone();
-            let literal_field_types = self.get_field_types(&literal_fields);
+            let literal_field_types = self.get_field_types(literal_fields);
 
             self.errors.push(TypeError::FieldsMismatch(
                 struct_type_fields,

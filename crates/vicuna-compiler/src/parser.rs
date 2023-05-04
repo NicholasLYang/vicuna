@@ -92,17 +92,16 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clon
         let string = string().map_with_span(|s, span| Span(Expr::Value(Value::String(s)), span));
 
         let fields = ident
-            .map_with_span(|s, span| Span(s, span))
+            .map_with_span(Span)
             .then_ignore(just(':'))
             .then(expr.clone())
             .separated_by(just(','))
             .delimited_by(just('{'), just('}'));
 
         let enum_literal = ident
-            .clone()
-            .map_with_span(|s, span| Span(s, span))
+            .map_with_span(Span)
             .then_ignore(just("::"))
-            .then(ident.map_with_span(|s, span| Span(s, span)))
+            .then(ident.map_with_span(Span))
             .then(fields.clone())
             .map_with_span(|((enum_name, variant_name), v), span| {
                 Span(
@@ -116,7 +115,7 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clon
             });
 
         let struct_literal = ident
-            .map_with_span(|i, span| Span(i, span))
+            .map_with_span(Span)
             .then(fields)
             .map_with_span(|(name, fields), span| {
                 Span(Expr::Struct(name, fields.into_iter().collect()), span)
@@ -140,7 +139,7 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clon
             .map_with_span(|args, span| Span(PostFix::Args(args), span));
 
         let field = just('.')
-            .ignore_then(ident.map_with_span(|e, span| Span(e, span)))
+            .ignore_then(ident.map_with_span(Span))
             .map_with_span(|field, span| Span(PostFix::Field(field), span));
 
         let index = just('[')
@@ -161,7 +160,7 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clon
         let unary = op('-')
             .to(UnaryOp::Negate)
             .or(op('!').to(UnaryOp::Not))
-            .map_with_span(|op, span| Span(op, span))
+            .map_with_span(Span)
             .repeated()
             .then(call.or(atom))
             .foldr(|op, rhs| {
@@ -183,22 +182,22 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clon
                 Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
             });
 
-        let addition = product
+        
+
+        product
             .clone()
             .then(
                 op('+')
                     .to(BinaryOp::Add)
                     .or(op('-').to(BinaryOp::Subtract))
-                    .map_with_span(|op, span| Span(op, span))
+                    .map_with_span(Span)
                     .then(product)
                     .repeated(),
             )
             .foldl(|lhs, (op, rhs)| {
                 let span = (lhs.1.start())..(rhs.1.end());
                 Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
-            });
-
-        addition
+            })
     })
 }
 
@@ -219,7 +218,7 @@ fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Cl
 fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone + Copy {
     text::ident()
         .padded()
-        .map_with_span(|s, span| Span(s, span))
+        .map_with_span(Span)
 }
 
 fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> {
@@ -235,7 +234,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
         .map(|fields| fields.into_iter().collect::<Vec<_>>());
 
     let struct_declaration = text::keyword("struct")
-        .ignore_then(ident.clone())
+        .ignore_then(ident)
         .then(fields.clone())
         .map(|(name, fields)| TypeDeclaration::Struct { name, fields });
 
@@ -291,7 +290,7 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .then(
                 expr_block
                     .clone()
-                    .map_with_span(|expr, span| Span(expr, span)),
+                    .map_with_span(Span),
             )
             .map_with_span(|(((name, params), return_type), body), span| {
                 Span(
@@ -320,10 +319,10 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .then(
                 expr_block
                     .clone()
-                    .map_with_span(|block, span| Span(block, span)),
+                    .map_with_span(Span),
             )
             .then_ignore(text::keyword("else"))
-            .then(expr_block.map_with_span(|block, span| Span(block, span)))
+            .then(expr_block.map_with_span(Span))
             .map_with_span(|(((name, condition), then_block), else_block), span| {
                 Span(
                     Stmt::LetIf {
@@ -365,20 +364,19 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                     .padded()
                     .to(ImportType::External)
                     .or(empty().to(ImportType::Internal))
-                    .map_with_span(|ty, span| Span(ty, span)),
+                    .map_with_span(Span),
             )
-            .then(ident.clone().map(Some).or(empty().to(None)))
+            .then(ident.map(Some).or(empty().to(None)))
             .then_ignore(just(',').padded().to(()).or(empty()))
             .then(
                 ident
-                    .clone()
                     .separated_by(just(','))
                     .allow_trailing()
                     .delimited_by(just('{'), just('}'))
                     .or(empty().to(Vec::new())),
             )
             .then_ignore(text::keyword("from").padded())
-            .then(string().map_with_span(|s, span| Span(s, span)))
+            .then(string().map_with_span(Span))
             .then_ignore(just(';'))
             .map_with_span(
                 |(((import_type, default_import), named_imports), module), span| {
