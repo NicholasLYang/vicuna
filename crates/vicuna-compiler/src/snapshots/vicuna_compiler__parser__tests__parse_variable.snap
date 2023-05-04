@@ -1,0 +1,9 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "expr().parse(\"abcd\")"
+---
+Ok:
+  - Variable: abcd
+  - start: 0
+    end: 4
+

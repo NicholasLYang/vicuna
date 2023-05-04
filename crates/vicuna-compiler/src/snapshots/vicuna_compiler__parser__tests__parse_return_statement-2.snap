@@ -1,0 +1,9 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "stmt().parse(\"return;\")"
+---
+Ok:
+  - Return: ~
+  - start: 0
+    end: 7
+

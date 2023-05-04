@@ -1,0 +1,12 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "type_declaration().parse(\"struct Foo {}\")"
+---
+Ok:
+  Struct:
+    name:
+      - Foo
+      - start: 6
+        end: 11
+    fields: []
+

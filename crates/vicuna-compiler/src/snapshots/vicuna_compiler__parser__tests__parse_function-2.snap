@@ -1,0 +1,27 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "stmt().parse(\"fn foo() -> i32 { 20 }\")"
+---
+Ok:
+  - Function:
+      name:
+        - foo
+        - start: 2
+          end: 6
+      params: []
+      return_type:
+        - I32
+        - start: 12
+          end: 16
+      body:
+        - stmts: []
+          end_expr:
+            - Value:
+                I32: 20
+            - start: 18
+              end: 20
+        - start: 16
+          end: 22
+  - start: 0
+    end: 22
+

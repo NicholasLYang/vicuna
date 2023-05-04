@@ -1,0 +1,9 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "expr().parse(\"_\")"
+---
+Ok:
+  - Variable: _
+  - start: 0
+    end: 1
+

@@ -1,0 +1,10 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "expr().parse(\"true\")"
+---
+Ok:
+  - Value:
+      Bool: true
+  - start: 0
+    end: 4
+

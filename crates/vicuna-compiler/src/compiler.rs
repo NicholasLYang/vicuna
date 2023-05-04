@@ -1,9 +1,8 @@
 use crate::ast::Program;
 use crate::js_backend::JsBackend;
-use crate::parser::parse;
+use crate::parser::{parse, ParseError};
 use crate::type_checker::{TypeChecker, TypeError};
 use anyhow::Result;
-use chumsky::error::Simple;
 use tracing::debug;
 
 #[derive(Debug, Clone)]
@@ -21,7 +20,7 @@ pub struct CheckOutput {
 
 #[derive(Debug, Clone)]
 pub struct Errors {
-    pub parse_errors: Vec<Simple<char>>,
+    pub parse_errors: Vec<ParseError>,
     pub type_errors: Vec<TypeError>,
 }
 

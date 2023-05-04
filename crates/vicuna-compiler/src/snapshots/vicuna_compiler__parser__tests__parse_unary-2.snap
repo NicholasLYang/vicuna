@@ -1,0 +1,15 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "expr().parse(\"!bar\")"
+---
+Ok:
+  - Unary:
+      - - Not
+        - start: 0
+          end: 1
+      - - Variable: bar
+        - start: 1
+          end: 4
+  - start: 0
+    end: 4
+

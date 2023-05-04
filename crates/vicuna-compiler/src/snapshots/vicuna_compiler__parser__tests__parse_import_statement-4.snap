@@ -1,0 +1,25 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "stmt().parse(r#\"import extern { foo, bar } from \"https://example.com/baz\";\"#)"
+---
+Ok:
+  - Import:
+      ty:
+        - External
+        - start: 7
+          end: 14
+      default_import: ~
+      named_imports:
+        - - foo
+          - start: 15
+            end: 19
+        - - bar
+          - start: 20
+            end: 25
+      path:
+        - "https://example.com/baz"
+        - start: 32
+          end: 57
+  - start: 0
+    end: 58
+

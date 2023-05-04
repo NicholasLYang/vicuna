@@ -362,7 +362,7 @@ impl TypeChecker {
                     self.errors.push(TypeError::TypeMismatch {
                         expected_ty: return_type,
                         received_ty: end_expr_ty,
-                        span: body.0.end_expr.1.clone(),
+                        span: body.0.end_expr.as_ref().unwrap().1.clone(),
                     });
                 }
             }
@@ -653,7 +653,6 @@ impl TypeChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::ExprBlock;
 
     fn parse_program(code: &str) -> Program {
         let (program, _) = crate::parse(code);
@@ -741,7 +740,7 @@ mod tests {
         assert_eq!(checker.check(&program), vec![]);
 
         let checker = TypeChecker::new();
-        let program = parse_program("let x = f()");
+        let program = parse_program("let x = f();");
 
         assert_eq!(
             checker.check(&program),

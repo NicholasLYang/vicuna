@@ -1,0 +1,29 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "expr().parse(\"foo + (11 * 2)\")"
+---
+Ok:
+  - Binary:
+      - - Add
+        - start: 4
+          end: 6
+      - - Variable: foo
+        - start: 0
+          end: 4
+      - - Binary:
+            - - Multiply
+              - start: 10
+                end: 12
+            - - Value:
+                  I32: 11
+              - start: 7
+                end: 9
+            - - Value:
+                  I32: 2
+              - start: 12
+                end: 13
+        - start: 7
+          end: 13
+  - start: 0
+    end: 13
+

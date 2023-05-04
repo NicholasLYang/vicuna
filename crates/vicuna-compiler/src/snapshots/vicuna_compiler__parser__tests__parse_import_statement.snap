@@ -1,0 +1,22 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "stmt().parse(r#\"import foo from \"./bar\";\"#)"
+---
+Ok:
+  - Import:
+      ty:
+        - Internal
+        - start: 7
+          end: 8
+      default_import:
+        - foo
+        - start: 7
+          end: 11
+      named_imports: []
+      path:
+        - "./bar"
+        - start: 16
+          end: 23
+  - start: 0
+    end: 24
+

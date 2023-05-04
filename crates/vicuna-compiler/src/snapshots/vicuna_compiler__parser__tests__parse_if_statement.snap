@@ -1,0 +1,35 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "stmt().parse(\"if b {\n               let a = 10;\n             } else {\n               let b = 20;\n             }\")"
+---
+Ok:
+  - If:
+      condition:
+        - Variable: b
+        - start: 3
+          end: 5
+      then_block:
+        - - Let:
+              - - a
+                - start: 25
+                  end: 28
+              - - Value:
+                    I32: 10
+                - start: 30
+                  end: 32
+          - start: 22
+            end: 33
+      else_block:
+        - - Let:
+              - - b
+                - start: 74
+                  end: 77
+              - - Value:
+                    I32: 20
+                - start: 79
+                  end: 81
+          - start: 71
+            end: 82
+  - start: 0
+    end: 97
+

@@ -1,0 +1,21 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "type_declaration().parse(\"enum Foo { A { foo: string } }\")"
+---
+Ok:
+  Enum:
+    name:
+      - Foo
+      - start: 4
+        end: 9
+    variants:
+      - - - A
+          - start: 11
+            end: 13
+        - - - - foo
+              - start: 15
+                end: 18
+            - - String
+              - start: 19
+                end: 27
+

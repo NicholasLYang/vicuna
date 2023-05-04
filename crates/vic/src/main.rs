@@ -38,7 +38,7 @@ fn check(source_path: String) -> Result<()> {
     let source = fs::read_to_string(source_path)?;
     let output = vicuna_compiler::check(&source)?;
     for parse_error in output.errors.parse_errors {
-        eprintln!("{}", parse_error);
+        eprintln!("{:?}", Report::new(parse_error));
     }
     for type_error in output.errors.type_errors {
         eprintln!("{:?}", Report::new(type_error));

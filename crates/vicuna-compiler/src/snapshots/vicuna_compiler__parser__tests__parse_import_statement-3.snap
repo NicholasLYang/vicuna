@@ -1,0 +1,28 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "stmt().parse(r#\"import qux, { foo, bar } from \"./baz\";\"#)"
+---
+Ok:
+  - Import:
+      ty:
+        - Internal
+        - start: 7
+          end: 8
+      default_import:
+        - qux
+        - start: 7
+          end: 10
+      named_imports:
+        - - foo
+          - start: 13
+            end: 17
+        - - bar
+          - start: 18
+            end: 23
+      path:
+        - "./baz"
+        - start: 30
+          end: 37
+  - start: 0
+    end: 38
+

@@ -1,0 +1,22 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "stmt().parse(\"if b { 10; }\")"
+---
+Ok:
+  - If:
+      condition:
+        - Variable: b
+        - start: 3
+          end: 5
+      then_block:
+        - - Expr:
+              - Value:
+                  I32: 10
+              - start: 7
+                end: 9
+          - start: 7
+            end: 10
+      else_block: []
+  - start: 0
+    end: 12
+
