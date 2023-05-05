@@ -1,0 +1,10 @@
+struct Student {
+  age: i32,
+  name: string,
+}
+
+let s = Student {
+  age: 10,
+  name: "hello",
+  height: 180
+};

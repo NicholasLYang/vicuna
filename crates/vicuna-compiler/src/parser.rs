@@ -96,6 +96,7 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clon
             .then_ignore(just(':'))
             .then(expr.clone())
             .separated_by(just(','))
+            .allow_trailing()
             .delimited_by(just('{'), just('}'));
 
         let enum_literal = ident
@@ -114,12 +115,13 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clon
                 )
             });
 
-        let struct_literal = ident
-            .map_with_span(Span)
-            .then(fields)
-            .map_with_span(|(name, fields), span| {
-                Span(Expr::Struct(name, fields.into_iter().collect()), span)
-            });
+        let struct_literal =
+            ident
+                .map_with_span(Span)
+                .then(fields)
+                .map_with_span(|(name, fields), span| {
+                    Span(Expr::Struct(name, fields.into_iter().collect()), span)
+                });
 
         let atom = float
             .or(int)
@@ -182,8 +184,6 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clon
                 Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
             });
 
-        
-
         product
             .clone()
             .then(
@@ -216,9 +216,7 @@ fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Cl
 }
 
 fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone + Copy {
-    text::ident()
-        .padded()
-        .map_with_span(Span)
+    text::ident().padded().map_with_span(Span)
 }
 
 fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> {
@@ -287,11 +285,7 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .ignore_then(ident)
             .then(function_parameters)
             .then(optional_return_type)
-            .then(
-                expr_block
-                    .clone()
-                    .map_with_span(Span),
-            )
+            .then(expr_block.clone().map_with_span(Span))
             .map_with_span(|(((name, params), return_type), body), span| {
                 Span(
                     Stmt::Function(Function {
@@ -316,11 +310,7 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .then_ignore(just('='))
             .then_ignore(text::keyword("if").padded())
             .then(expr())
-            .then(
-                expr_block
-                    .clone()
-                    .map_with_span(Span),
-            )
+            .then(expr_block.clone().map_with_span(Span))
             .then_ignore(text::keyword("else"))
             .then(expr_block.map_with_span(Span))
             .map_with_span(|(((name, condition), then_block), else_block), span| {
@@ -460,6 +450,7 @@ mod tests {
     #[test]
     fn test_parse_struct_literal() {
         insta::assert_yaml_snapshot!(expr().parse("Foo { a: 10, b: 20 }"));
+        insta::assert_yaml_snapshot!(expr().parse("Foo { a: 10 }"));
 
         insta::assert_yaml_snapshot!(expr().parse("Foo::Bar { a: 10, b: 20 }"));
     }

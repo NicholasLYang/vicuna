@@ -1,0 +1,6 @@
+---
+source: crates/vicuna-compiler/src/type_checker.rs
+expression: checker.errors
+---
+[]
+

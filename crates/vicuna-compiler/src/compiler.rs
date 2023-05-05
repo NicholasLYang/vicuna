@@ -13,33 +13,29 @@ pub struct CompilerOutput {
 }
 
 #[derive(Debug, Clone)]
-pub struct CheckOutput {
-    pub ast: Program,
-    pub errors: Errors,
-}
-
-#[derive(Debug, Clone)]
 pub struct Errors {
     pub parse_errors: Vec<ParseError>,
     pub type_errors: Vec<TypeError>,
 }
 
-pub fn check(source: &str) -> Result<CheckOutput> {
+pub fn check(source: &str) -> Errors {
     let (program, parse_errors) = parse(source);
 
-    let program = program.ok_or_else(|| anyhow::anyhow!("Fatal parse error"))?;
-    debug!("AST: {:#?}", program);
+    let Some(program) = program else {
+        return Errors {
+            parse_errors,
+            type_errors: Vec::new(),
+        }
+    };
+    debug!("AST: {:?}", program);
 
     let type_checker = TypeChecker::new();
     let type_errors = type_checker.check(&program);
 
-    Ok(CheckOutput {
-        ast: program,
-        errors: Errors {
-            parse_errors,
-            type_errors,
-        },
-    })
+    Errors {
+        parse_errors,
+        type_errors,
+    }
 }
 
 pub fn compile(source: &str) -> Result<CompilerOutput> {

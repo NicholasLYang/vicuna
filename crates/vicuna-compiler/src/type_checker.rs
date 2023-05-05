@@ -17,15 +17,16 @@ use crate::ast::{
 use miette::Diagnostic;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::mem;
 use std::ops::Range;
 use thiserror::Error;
+use tracing::debug;
 
 // TODO: Intern strings
 type Name = String;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Hash)]
+#[derive(Clone, PartialEq, Serialize, Hash)]
 pub enum Type {
     I32,
     F32,
@@ -42,7 +43,28 @@ pub enum Type {
     Named(Name),
 }
 
+#[derive(Clone, PartialEq, Serialize, Hash)]
+pub enum InferredType {
+    Known(Type),
+    Unknown,
+}
+
+impl Debug for InferredType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InferredType::Known(ty) => write!(f, "{}", ty),
+            InferredType::Unknown => write!(f, "<unknown type>"),
+        }
+    }
+}
+
 impl Display for Type {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl Debug for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::I32 => write!(f, "i32"),
@@ -127,30 +149,50 @@ pub enum TypeError {
         #[label]
         span: Range<usize>,
     },
-    #[error("Got different struct fields than defined: expected {0:?}, got {1:?}")]
+    #[error("Got different struct fields than defined: expected {expected_fields:?}, got {received_fields:?}")]
     #[diagnostic(code(type_error::struct_fields_mismatch))]
-    FieldsMismatch(HashMap<Name, Type>, Vec<(Span<Name>, Option<Type>)>),
+    FieldsMismatch {
+        expected_fields: HashMap<Name, Type>,
+        received_fields: HashMap<Name, InferredType>,
+        #[label]
+        span: Range<usize>,
+    },
     #[error("Missing field {field_name} in struct {struct_name}")]
     #[diagnostic(code(type_error::missing_field))]
-    MissingField { field_name: Name, struct_name: Name },
+    MissingField {
+        field_name: Name,
+        struct_name: Name,
+        #[label]
+        span: Range<usize>,
+    },
     #[error("Undefined variable {0}")]
-    UndefinedVariable(Name),
+    UndefinedVariable(Name, #[label] Range<usize>),
     #[error("Undefined struct {0}")]
-    UndefinedStruct(Name),
+    UndefinedStruct(Name, #[label] Range<usize>),
     #[error("Expected {0} args but received {1}")]
-    ArityMismatch(usize, usize),
+    ArityMismatch(usize, usize, #[label] Range<usize>),
     #[error("Type {0} is not callable")]
-    NotCallable(Type),
+    NotCallable(Type, #[label] Range<usize>),
     #[error("Type {0} is not a struct")]
-    NotStruct(Type),
+    NotStruct(Type, #[label] Range<usize>),
     #[error("Type {0} is not an array")]
-    NotArray(Type),
+    NotArray(Type, #[label] Range<usize>),
     #[error("Cannot return outside a function")]
-    ReturnOutsideFunction,
+    ReturnOutsideFunction(#[label] Range<usize>),
     #[error("Struct {struct_name} does not have field {field_name}")]
-    UndefinedField { struct_name: Name, field_name: Name },
+    UndefinedField {
+        struct_name: Name,
+        field_name: Name,
+        #[label]
+        span: Range<usize>,
+    },
     #[error("Enum {enum_name} does not have variant {variant_name}")]
-    UndefinedVariant { enum_name: Name, variant_name: Name },
+    UndefinedVariant {
+        enum_name: Name,
+        variant_name: Name,
+        #[label]
+        span: Range<usize>,
+    },
 }
 
 impl From<Option<&TypeSig>> for Type {
@@ -404,7 +446,8 @@ impl TypeChecker {
                         });
                     }
                 } else {
-                    self.errors.push(TypeError::ReturnOutsideFunction);
+                    self.errors
+                        .push(TypeError::ReturnOutsideFunction(stmt.1.clone()));
                 }
             }
             Stmt::Import {
@@ -431,6 +474,7 @@ impl TypeChecker {
     }
 
     fn check_expr(&mut self, expr: &Span<Expr>) -> Option<Type> {
+        debug!("checking expr: {:?}", expr.0);
         match &expr.0 {
             Expr::Binary(op, lhs, rhs) => {
                 let lhs_ty = self.check_expr(lhs)?;
@@ -489,13 +533,17 @@ impl TypeChecker {
                 if let Some(ty) = self.symbol_table.lookup(name) {
                     Some(ty.clone())
                 } else {
-                    self.errors.push(TypeError::UndefinedVariable(name.clone()));
+                    self.errors
+                        .push(TypeError::UndefinedVariable(name.clone(), expr.1.clone()));
                     None
                 }
             }
-            Expr::PostFix(callee, Span(PostFix::Args(args), _)) => {
+            Expr::PostFix(callee, Span(PostFix::Args(args), args_span)) => {
                 if let Expr::Variable(name) = &callee.0 {
                     if name == "print" {
+                        for arg in args {
+                            self.check_expr(arg)?;
+                        }
                         return Some(Type::Void);
                     }
                 }
@@ -507,8 +555,11 @@ impl TypeChecker {
                 } = callee_ty
                 {
                     if args.len() != param_types.len() {
-                        self.errors
-                            .push(TypeError::ArityMismatch(param_types.len(), args.len()));
+                        self.errors.push(TypeError::ArityMismatch(
+                            param_types.len(),
+                            args.len(),
+                            args_span.clone(),
+                        ));
                     }
 
                     for (arg, param_type) in args.iter().zip(param_types) {
@@ -524,12 +575,14 @@ impl TypeChecker {
 
                     Some(*return_type)
                 } else {
-                    self.errors.push(TypeError::NotCallable(callee_ty));
+                    self.errors
+                        .push(TypeError::NotCallable(callee_ty, callee.1.clone()));
                     None
                 }
             }
-            Expr::PostFix(callee, Span(PostFix::Field(field), _)) => {
+            Expr::PostFix(callee, Span(PostFix::Field(field), field_span)) => {
                 let callee_ty = self.check_expr(callee)?;
+                debug!("callee type: {:?}", callee);
                 if let Type::Named(struct_name) = callee_ty {
                     let fields = self.defined_structs.lookup(&struct_name)?;
                     if let Some(ty) = fields.get(&field.0) {
@@ -538,12 +591,14 @@ impl TypeChecker {
                         self.errors.push(TypeError::UndefinedField {
                             struct_name: struct_name.clone(),
                             field_name: field.0.clone(),
+                            span: field_span.clone(),
                         });
 
                         None
                     }
                 } else {
-                    self.errors.push(TypeError::NotStruct(callee_ty));
+                    self.errors
+                        .push(TypeError::NotStruct(callee_ty, callee.1.clone()));
                     None
                 }
             }
@@ -561,17 +616,18 @@ impl TypeChecker {
                 if let Type::Array(ty) = callee_ty {
                     Some(*ty)
                 } else {
-                    self.errors.push(TypeError::NotArray(callee_ty));
+                    self.errors
+                        .push(TypeError::NotArray(callee_ty, callee.1.clone()));
                     None
                 }
             }
             Expr::Struct(name, literal_fields) => {
                 let Some(struct_type_fields) = self.defined_structs.lookup(&name.0).cloned() else {
-                    self.errors.push(TypeError::UndefinedStruct(name.0.clone()));
+                    self.errors.push(TypeError::UndefinedStruct(name.0.clone(), expr.1.clone()));
                     return None;
                 };
 
-                self.compare_fields(&name.0, literal_fields, &struct_type_fields)?;
+                self.compare_fields(&name.0, expr.1.clone(), literal_fields, &struct_type_fields)?;
 
                 Some(Type::Named(name.0.clone()))
             }
@@ -586,11 +642,12 @@ impl TypeChecker {
                     self.errors.push(TypeError::UndefinedVariant {
                         enum_name: enum_name.0.clone(),
                         variant_name: variant_name.0.clone(),
+                        span: variant_name.1.clone(),
                     });
                     return None;
                 };
 
-                self.compare_fields(&variant_name.0, fields, &variant_fields.1)?;
+                self.compare_fields(&variant_name.0, expr.1.clone(), fields, &variant_fields.1)?;
 
                 Some(Type::Named(variant_name.0.clone()))
             }
@@ -601,11 +658,14 @@ impl TypeChecker {
     fn get_field_types(
         &mut self,
         fields: &Vec<(Span<String>, Span<Expr>)>,
-    ) -> Vec<(Span<String>, Option<Type>)> {
-        let mut field_types = Vec::new();
+    ) -> HashMap<String, InferredType> {
+        let mut field_types = HashMap::new();
         for (field_name, field_value) in fields {
-            let field_ty = self.check_expr(field_value);
-            field_types.push((field_name.clone(), field_ty));
+            let field_ty = match self.check_expr(field_value) {
+                Some(ty) => InferredType::Known(ty),
+                None => InferredType::Unknown,
+            };
+            field_types.insert(field_name.0.clone(), field_ty);
         }
 
         field_types
@@ -614,6 +674,7 @@ impl TypeChecker {
     fn compare_fields(
         &mut self,
         struct_name: &str,
+        struct_span: Range<usize>,
         literal_fields: &Vec<(Span<String>, Span<Expr>)>,
         struct_type_fields: &HashMap<String, Type>,
     ) -> Option<()> {
@@ -621,10 +682,11 @@ impl TypeChecker {
             let struct_type_fields = struct_type_fields.clone();
             let literal_field_types = self.get_field_types(literal_fields);
 
-            self.errors.push(TypeError::FieldsMismatch(
-                struct_type_fields,
-                literal_field_types,
-            ));
+            self.errors.push(TypeError::FieldsMismatch {
+                expected_fields: struct_type_fields,
+                received_fields: literal_field_types,
+                span: struct_span,
+            });
             return None;
         }
 
@@ -642,6 +704,7 @@ impl TypeChecker {
                 self.errors.push(TypeError::MissingField {
                     struct_name: struct_name.to_string(),
                     field_name: field_name.0.clone(),
+                    span: field_name.1.clone(),
                 });
             }
         }
@@ -673,6 +736,7 @@ mod tests {
         );
 
         assert_eq!(checker.check_expr(&expr), Some(Type::I32));
+        insta::assert_yaml_snapshot!(checker.errors);
 
         let expr = Span(
             Expr::Binary(
@@ -684,14 +748,7 @@ mod tests {
         );
 
         assert_eq!(checker.check_expr(&expr), None);
-        assert_eq!(
-            checker.errors,
-            vec![TypeError::TypeMismatch {
-                expected_ty: Type::I32,
-                received_ty: Type::Bool,
-                span: 6..9
-            }]
-        );
+        insta::assert_yaml_snapshot!(checker.errors);
     }
 
     #[test]
@@ -705,7 +762,7 @@ mod tests {
         z + y;",
         );
 
-        assert_eq!(checker.check(&program), vec![]);
+        insta::assert_yaml_snapshot!(checker.check(&program));
 
         let checker = TypeChecker::new();
         let program = parse_program(
@@ -717,14 +774,7 @@ mod tests {
         ",
         );
 
-        assert_eq!(
-            checker.check(&program),
-            vec![
-                TypeError::UndefinedVariable("a".into()),
-                TypeError::UndefinedVariable("b".into()),
-                TypeError::UndefinedVariable("c".into())
-            ]
-        );
+        insta::assert_yaml_snapshot!(checker.check(&program))
     }
 
     #[test]
@@ -737,14 +787,11 @@ mod tests {
         ",
         );
 
-        assert_eq!(checker.check(&program), vec![]);
+        insta::assert_yaml_snapshot!(checker.check(&program));
 
         let checker = TypeChecker::new();
         let program = parse_program("let x = f();");
 
-        assert_eq!(
-            checker.check(&program),
-            vec![TypeError::UndefinedVariable("f".into())]
-        );
+        insta::assert_yaml_snapshot!(checker.check(&program));
     }
 }

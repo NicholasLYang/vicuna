@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
-use miette::Report;
+use miette::{Error, Report};
 use std::fs;
+use std::sync::Arc;
 use vicuna_compiler::compile;
 
 #[derive(Debug, Clone, Parser)]
@@ -36,18 +37,31 @@ fn run(source_path: String) -> Result<()> {
 
 fn check(source_path: String) -> Result<()> {
     let source = fs::read_to_string(source_path)?;
-    let output = vicuna_compiler::check(&source)?;
-    for parse_error in output.errors.parse_errors {
-        eprintln!("{:?}", Report::new(parse_error));
+    let errors = vicuna_compiler::check(&source);
+    let shared_source = Arc::new(source);
+    if errors.parse_errors.is_empty() && errors.type_errors.is_empty() {
+        println!("No errors found");
+        return Ok(());
     }
-    for type_error in output.errors.type_errors {
-        eprintln!("{:?}", Report::new(type_error));
+    for parse_error in errors.parse_errors {
+        eprintln!(
+            "{:?}",
+            Report::new(parse_error).with_source_code(shared_source.clone())
+        );
+    }
+
+    for type_error in errors.type_errors {
+        eprintln!(
+            "{:?}",
+            Error::new(type_error).with_source_code(shared_source.clone())
+        );
     }
 
     Ok(())
 }
 
 fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
     let command = Command::parse();
 
     match command {
