@@ -1,0 +1,11 @@
+fn foo() -> i32 {
+  if true {
+    if true {
+      1
+    } else {
+      2
+    }
+  } else {
+    3
+  }
+}

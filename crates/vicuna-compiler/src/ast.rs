@@ -37,20 +37,6 @@ pub struct Function {
 pub enum Stmt {
     Let(Span<String>, Span<Expr>),
     Function(Function),
-    // Let assigned to an if expression.
-    // ```
-    //  let a = if foo {
-    //    1
-    //  } else {
-    //    2
-    //  }
-    // ```
-    LetIf {
-        name: Span<String>,
-        condition: Span<Expr>,
-        then_block: Span<ExprBlock>,
-        else_block: Span<ExprBlock>,
-    },
     Expr(Span<Expr>),
     If {
         condition: Span<Expr>,
@@ -78,7 +64,7 @@ pub enum ImportType {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ExprBlock {
     pub stmts: Vec<Span<Stmt>>,
-    pub end_expr: Option<Span<Expr>>,
+    pub end_expr: Option<Box<Span<Expr>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -96,6 +82,24 @@ pub enum Expr {
         enum_name: Span<String>,
         variant_name: Span<String>,
         fields: Vec<(Span<String>, Span<Expr>)>,
+    },
+    // If expressions are not available in all places, because they
+    // don't transpile cleanly to JavaScript. Instead, they're only
+    // available when binding to a variable, i.e. let a = if foo { 1 } else { 2 }
+    // and at the end of a function, i.e.
+    // ```
+    // fn foo() -> i32 {
+    //   if bar {
+    //     1
+    //   } else {
+    //     2
+    //   }
+    // }
+    // ```
+    If {
+        condition: Box<Span<Expr>>,
+        then_block: Span<ExprBlock>,
+        else_block: Span<ExprBlock>,
     },
 }
 

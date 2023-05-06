@@ -11,8 +11,8 @@
 //!  - Borrow checking
 //!
 use crate::ast::{
-    BinaryOp, Expr, Function, ImportType, PostFix, Program, Span, Stmt, TypeDeclaration, TypeSig,
-    UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, Function, ImportType, PostFix, Program, Span, Stmt, TypeDeclaration,
+    TypeSig, UnaryOp, Value,
 };
 use miette::Diagnostic;
 use serde::Serialize;
@@ -318,55 +318,6 @@ impl TypeChecker {
             Stmt::Let(name, rhs) => {
                 let ty = self.check_expr(rhs)?;
                 self.symbol_table.insert(name.0.clone(), ty);
-            }
-            Stmt::LetIf {
-                name,
-                condition,
-                then_block,
-                else_block,
-            } => {
-                let condition_ty = self.check_expr(condition)?;
-                if condition_ty != Type::Bool {
-                    self.errors.push(TypeError::TypeMismatch {
-                        expected_ty: Type::Bool,
-                        received_ty: condition_ty,
-                        span: stmt.1.clone(),
-                    });
-                }
-
-                self.enter_scope();
-
-                self.check_block(&then_block.0.stmts);
-
-                let then_ty = if let Some(end_expr) = &then_block.0.end_expr {
-                    self.check_expr(end_expr)
-                } else {
-                    Some(Type::Void)
-                };
-
-                self.exit_scope();
-                self.enter_scope();
-                self.check_block(&else_block.0.stmts);
-
-                let else_ty = if let Some(end_expr) = &else_block.0.end_expr {
-                    self.check_expr(end_expr)
-                } else {
-                    Some(Type::Void)
-                };
-                self.symbol_table.exit_scope();
-
-                // We only call try here because we want to collect all the type errors in both branches
-                let then_ty = then_ty?;
-                let else_ty = else_ty?;
-                if then_ty != else_ty {
-                    self.errors.push(TypeError::TypeMismatch {
-                        expected_ty: then_ty.clone(),
-                        received_ty: else_ty,
-                        span: else_block.1.clone(),
-                    });
-                }
-
-                self.symbol_table.insert(name.0.clone(), then_ty);
             }
             Stmt::Expr(expr) => {
                 self.check_expr(expr)?;
@@ -676,6 +627,44 @@ impl TypeChecker {
 
                 Some(Type::Named(variant_name.0.clone()))
             }
+            Expr::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                let condition_ty = self.check_expr(condition)?;
+                if condition_ty != Type::Bool {
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected_ty: Type::Bool,
+                        received_ty: condition_ty,
+                        span: condition.1.clone(),
+                    });
+                }
+
+                let then_ty = self.check_expression_block(then_block)?;
+                let else_ty = self.check_expression_block(else_block)?;
+
+                if then_ty != else_ty {
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected_ty: then_ty.clone(),
+                        received_ty: else_ty.clone(),
+                        span: expr.1.clone(),
+                    });
+                }
+
+                Some(then_ty)
+            }
+        }
+    }
+
+    fn check_expression_block(&mut self, block: &Span<ExprBlock>) -> Option<Type> {
+        for stmt in &block.0.stmts {
+            self.check_stmt(stmt)?;
+        }
+        if let Some(expr) = &block.0.end_expr {
+            self.check_expr(expr)
+        } else {
+            Some(Type::Void)
         }
     }
 

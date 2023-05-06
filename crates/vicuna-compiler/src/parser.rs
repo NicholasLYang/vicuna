@@ -239,6 +239,25 @@ fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone + Copy
     text::ident().padded().map_with_span(Span)
 }
 
+fn if_expression() -> impl Parser<char, Span<Expr>, Error = ParseError> {
+    text::keyword("if")
+        .padded()
+        .ignore_then(expr().map(Box::new))
+        .then(expression_block().map_with_span(Span))
+        .then_ignore(text::keyword("else"))
+        .then(expression_block().map_with_span(Span))
+        .map_with_span(|((condition, then_block), else_block), span| {
+            Span(
+                Expr::If {
+                    condition,
+                    then_block,
+                    else_block,
+                },
+                span,
+            )
+        })
+}
+
 fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> {
     let ident = ident();
 
@@ -274,17 +293,18 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
     enum_declaration.or(struct_declaration)
 }
 
-fn stmt() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
+fn expression_block() -> impl Parser<char, ExprBlock, Error = ParseError> {
+    statement()
+        .repeated()
+        .then(expr().map(Box::new).map(Some).or(empty().to(None)))
+        .delimited_by(just('{'), just('}'))
+        .map(|(stmts, end_expr)| ExprBlock { stmts, end_expr })
+        .padded()
+}
+
+fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
     recursive(|stmt| {
         let ident = ident();
-
-        let expr_block = stmt
-            .clone()
-            .repeated()
-            .then(expr().map(Some).or(empty().to(None)))
-            .delimited_by(just('{'), just('}'))
-            .map(|(stmts, end_expr)| ExprBlock { stmts, end_expr })
-            .padded();
 
         let function_parameters = ident
             .then_ignore(just(':'))
@@ -305,7 +325,7 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .ignore_then(ident)
             .then(function_parameters)
             .then(optional_return_type)
-            .then(expr_block.clone().map_with_span(Span))
+            .then(expression_block().map_with_span(Span))
             .map_with_span(|(((name, params), return_type), body), span| {
                 Span(
                     Stmt::Function(Function {
@@ -321,29 +341,9 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
         let let_decl = text::keyword("let")
             .ignore_then(ident)
             .then_ignore(just('='))
-            .then(expr().padded())
+            .then(if_expression().or(expr().padded()))
             .then_ignore(just(';'))
             .map_with_span(|(ident, expr), span| Span(Stmt::Let(ident, expr), span));
-
-        let let_if_decl = text::keyword("let")
-            .ignore_then(ident)
-            .then_ignore(just('='))
-            .then_ignore(text::keyword("if").padded())
-            .then(expr())
-            .then(expr_block.clone().map_with_span(Span))
-            .then_ignore(text::keyword("else"))
-            .then(expr_block.map_with_span(Span))
-            .map_with_span(|(((name, condition), then_block), else_block), span| {
-                Span(
-                    Stmt::LetIf {
-                        name,
-                        condition,
-                        then_block,
-                        else_block,
-                    },
-                    span,
-                )
-            });
 
         let block = stmt.repeated().delimited_by(just('{'), just('}'));
 
@@ -411,7 +411,6 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .map_with_span(|expr, span| Span(Stmt::Return(expr), span));
 
         function_decl
-            .or(let_if_decl)
             .or(let_decl)
             .or(if_stmt)
             .or(return_stmt)
@@ -425,7 +424,7 @@ fn stmt() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
 }
 
 fn parser() -> impl Parser<char, Vec<Span<Stmt>>, Error = ParseError> {
-    stmt().repeated().then_ignore(end())
+    statement().repeated().then_ignore(end())
 }
 
 pub fn parse(source: &str) -> (Option<Program>, Vec<ParseError>) {
