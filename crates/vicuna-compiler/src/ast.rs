@@ -131,6 +131,12 @@ pub enum BinaryOp {
     Subtract,
     Divide,
     Multiply,
+    GreaterThan,
+    GreaterThanOrEqual,
+    LessThan,
+    LessThanOrEqual,
+    Equal,
+    NotEqual,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Serialize)]

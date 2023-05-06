@@ -182,11 +182,17 @@ impl<T: Write> JsBackend<T> {
                 self.output.write_all(name.0.as_bytes())?;
             }
             Expr::Binary(op, lhs, rhs) => {
-                let op_str = match op.0 {
+                let op_str: &[u8] = match op.0 {
                     BinaryOp::Add => b"+",
                     BinaryOp::Subtract => b"-",
                     BinaryOp::Divide => b"/",
                     BinaryOp::Multiply => b"*",
+                    BinaryOp::GreaterThan => b">",
+                    BinaryOp::GreaterThanOrEqual => b">=",
+                    BinaryOp::LessThan => b"<",
+                    BinaryOp::LessThanOrEqual => b"<=",
+                    BinaryOp::Equal => b"===",
+                    BinaryOp::NotEqual => b"!==",
                 };
 
                 self.emit_expr(lhs)?;

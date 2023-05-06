@@ -41,7 +41,16 @@ pub fn check(source: &str) -> Errors {
 pub fn compile(source: &str) -> Result<CompilerOutput> {
     let (program, parse_errors) = parse(source);
 
-    let program = program.ok_or_else(|| anyhow::anyhow!("Fatal parse error"))?;
+    let Some(program) = program else {
+        return Ok(CompilerOutput {
+            js: String::new(),
+            ast: Program::default(),
+            errors: Errors {
+                parse_errors,
+                type_errors: Vec::new(),
+            },
+        })
+    };
     debug!("AST: {:#?}", program);
 
     let type_checker = TypeChecker::new();

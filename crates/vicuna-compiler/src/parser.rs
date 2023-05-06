@@ -158,6 +158,7 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clon
             });
 
         let op = |c| just(c).padded();
+        let op2 = |c| just(c).padded();
 
         let unary = op('-')
             .to(UnaryOp::Negate)
@@ -184,7 +185,7 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clon
                 Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
             });
 
-        product
+        let addition = product
             .clone()
             .then(
                 op('+')
@@ -192,6 +193,25 @@ pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clon
                     .or(op('-').to(BinaryOp::Subtract))
                     .map_with_span(Span)
                     .then(product)
+                    .repeated(),
+            )
+            .foldl(|lhs, (op, rhs)| {
+                let span = (lhs.1.start())..(rhs.1.end());
+                Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
+            });
+
+        addition
+            .clone()
+            .then(
+                op('>')
+                    .to(BinaryOp::GreaterThan)
+                    .or(op('<').to(BinaryOp::LessThan))
+                    .or(op2(">=").to(BinaryOp::GreaterThanOrEqual))
+                    .or(op2("<=").to(BinaryOp::LessThanOrEqual))
+                    .or(op2("==").to(BinaryOp::Equal))
+                    .or(op2("!=").to(BinaryOp::NotEqual))
+                    .map_with_span(Span)
+                    .then(addition)
                     .repeated(),
             )
             .foldl(|lhs, (op, rhs)| {

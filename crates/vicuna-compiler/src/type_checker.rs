@@ -389,24 +389,22 @@ impl TypeChecker {
 
                 self.check_block(&body.0.stmts);
 
-                let end_expr_ty = if let Some(end_expr) = &body.0.end_expr {
-                    self.check_expr(end_expr)
-                } else {
-                    Some(Type::Void)
-                };
-                self.symbol_table.exit_scope();
                 let return_type = mem::replace(&mut self.return_type, old_return_type)
                     .expect("return type should be set");
 
-                let end_expr_ty = end_expr_ty?;
+                if let Some(end_expr) = &body.0.end_expr {
+                    let end_expr_ty = self.check_expr(end_expr)?;
 
-                if end_expr_ty != return_type {
-                    self.errors.push(TypeError::TypeMismatch {
-                        expected_ty: return_type,
-                        received_ty: end_expr_ty,
-                        span: body.0.end_expr.as_ref().unwrap().1.clone(),
-                    });
-                }
+                    if end_expr_ty != return_type {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected_ty: return_type,
+                            received_ty: end_expr_ty,
+                            span: body.0.end_expr.as_ref().unwrap().1.clone(),
+                        });
+                    }
+                };
+
+                self.symbol_table.exit_scope();
             }
             Stmt::If {
                 condition,
@@ -493,6 +491,33 @@ impl TypeChecker {
                             });
                             None
                         }
+                    }
+                    BinaryOp::Equal | BinaryOp::NotEqual => {
+                        if lhs_ty != rhs_ty {
+                            self.errors.push(TypeError::TypeMismatch {
+                                expected_ty: lhs_ty,
+                                received_ty: rhs_ty,
+                                span: rhs.1.clone(),
+                            });
+                        }
+
+                        Some(Type::Bool)
+                    }
+                    BinaryOp::GreaterThan
+                    | BinaryOp::GreaterThanOrEqual
+                    | BinaryOp::LessThan
+                    | BinaryOp::LessThanOrEqual => {
+                        let is_number = (lhs_ty == Type::I32 && rhs_ty == Type::I32)
+                            || (lhs_ty == Type::F32 && rhs_ty == Type::F32);
+                        if !is_number {
+                            self.errors.push(TypeError::TypeMismatch {
+                                expected_ty: lhs_ty,
+                                received_ty: rhs_ty,
+                                span: rhs.1.clone(),
+                            });
+                        }
+
+                        Some(Type::Bool)
                     }
                 }
             }
