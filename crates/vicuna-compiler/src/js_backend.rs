@@ -1,16 +1,31 @@
 use crate::ast::{
-    BinaryOp, Expr, Function, ImportType, PostFix, Program, Span, Stmt, UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, Function, ImportType, PostFix, Program, Span, Stmt, UnaryOp, Value,
 };
 use anyhow::Result;
 use std::io::Write;
+use std::mem;
+
+// We need to keep track of whether we're emitting an expression block
+// as the last expression of a function, in which case we want to add
+// a return statement to the last expression, or whether we're emitting
+// it as a variable binding, in which case we want to assign the result
+// to the variable.
+enum ExprBlockState {
+    Return,
+    Binding(String),
+}
 
 pub struct JsBackend<T: Write> {
     output: T,
+    expression_block_state: Option<ExprBlockState>,
 }
 
 impl<T: Write> JsBackend<T> {
     pub fn new(output: T) -> JsBackend<T> {
-        Self { output }
+        Self {
+            output,
+            expression_block_state: None,
+        }
     }
 
     pub fn emit_program(&mut self, program: &Program) -> Result<()> {
@@ -23,39 +38,20 @@ impl<T: Write> JsBackend<T> {
 
     fn emit_stmt(&mut self, stmt: &Span<Stmt>) -> Result<()> {
         match &stmt.0 {
+            Stmt::Let(name, if_expr @ Span(Expr::If { .. }, _)) => {
+                write!(self.output, "let {};", name.0)?;
+                let old_expression_block_state = mem::replace(
+                    &mut self.expression_block_state,
+                    Some(ExprBlockState::Binding(name.0.clone())),
+                );
+
+                self.emit_expr(if_expr)?;
+                self.expression_block_state = old_expression_block_state;
+            }
             Stmt::Let(name, rhs) => {
                 write!(self.output, "let {} = ", name.0)?;
                 self.emit_expr(rhs)?;
                 self.output.write_all(b";\n")?;
-            }
-            Stmt::LetIf {
-                name,
-                condition,
-                then_block,
-                else_block,
-            } => {
-                writeln!(self.output, "let {};", name.0)?;
-                write!(self.output, "if (")?;
-                self.emit_expr(condition)?;
-                writeln!(self.output, ") {{")?;
-                for stmt in &then_block.0.stmts {
-                    self.emit_stmt(stmt)?;
-                }
-                if let Some(end_expr) = &then_block.0.end_expr {
-                    write!(self.output, "{} = ", name.0)?;
-                    self.emit_expr(end_expr)?;
-                    writeln!(self.output, ";")?;
-                }
-                writeln!(self.output, "}} else {{")?;
-                for stmt in &else_block.0.stmts {
-                    self.emit_stmt(stmt)?;
-                }
-                if let Some(end_expr) = &else_block.0.end_expr {
-                    write!(self.output, "{} = ", name.0)?;
-                    self.emit_expr(end_expr)?;
-                    writeln!(self.output, ";")?;
-                }
-                writeln!(self.output, "}}")?;
             }
             Stmt::Expr(expr) => {
                 self.emit_expr(expr)?;
@@ -76,11 +72,24 @@ impl<T: Write> JsBackend<T> {
                     self.emit_stmt(stmt)?;
                 }
 
-                if let Some(end_expr) = &body.0.end_expr {
-                    self.output.write_all(b"return ")?;
-                    self.emit_expr(end_expr)?;
-                    self.output.write_all(b";\n")?;
+                let old_expression_block_state = mem::replace(
+                    &mut self.expression_block_state,
+                    Some(ExprBlockState::Return),
+                );
+
+                match body.0.end_expr.as_deref() {
+                    Some(if_expr @ Span(Expr::If { .. }, _)) => {
+                        self.emit_expr(if_expr)?;
+                    }
+                    Some(end_expr) => {
+                        self.output.write_all(b"return ")?;
+                        self.emit_expr(end_expr)?;
+                        self.output.write_all(b";\n")?;
+                    }
+                    _ => {}
                 }
+
+                self.expression_block_state = old_expression_block_state;
 
                 writeln!(self.output, "}}")?;
             }
@@ -238,7 +247,56 @@ impl<T: Write> JsBackend<T> {
                 }
                 self.output.write_all(b"}")?;
             }
+            // We assume that the if expression is well placed, and therefore not
+            // in the middle of an expression itself
+            Expr::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                self.output.write_all(b"if (")?;
+                self.emit_expr(condition)?;
+                self.output.write_all(b")\n")?;
+                self.emit_expression_block(then_block)?;
+                self.output.write_all(b" else\n")?;
+                self.emit_expression_block(else_block)?;
+            }
         }
+
+        Ok(())
+    }
+
+    fn emit_expression_block(&mut self, block: &Span<ExprBlock>) -> Result<()> {
+        self.output.write_all(b"{")?;
+        for stmt in &block.0.stmts {
+            self.emit_stmt(stmt)?;
+        }
+        match block.0.end_expr.as_deref() {
+            // If the end expression is an if expression, we don't bind or return,
+            // and let the if expression determine that itself.
+            Some(if_expr @ Span(Expr::If { .. }, _)) => {
+                self.emit_expr(&if_expr)?;
+            }
+            Some(end_expr) => {
+                let expr_block_state = self
+                    .expression_block_state
+                    .as_ref()
+                    .expect("Expression block state should be set");
+                match expr_block_state {
+                    ExprBlockState::Return => {
+                        self.output.write_all(b"return ")?;
+                        self.emit_expr(end_expr)?;
+                    }
+                    ExprBlockState::Binding(var) => {
+                        self.output.write_all(var.as_bytes())?;
+                        self.output.write_all(b" = ")?;
+                        self.emit_expr(end_expr)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.output.write_all(b"}")?;
 
         Ok(())
     }
