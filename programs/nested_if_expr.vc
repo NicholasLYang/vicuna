@@ -9,3 +9,17 @@ fn foo() -> i32 {
     3
   }
 }
+
+fn bar() -> i32 {
+  let a = if true {
+    if true {
+        1
+    } else {
+        2
+    }
+  } else {
+    3
+  }
+
+    a
+}

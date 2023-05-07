@@ -65,7 +65,7 @@ fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
         .map(|chars| chars.into_iter().collect())
 }
 
-pub(crate) fn expr() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clone {
+pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clone {
     let ident = text::ident().padded();
     recursive(|expr| {
         let int = text::int(10)
@@ -239,25 +239,6 @@ fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone + Copy
     text::ident().padded().map_with_span(Span)
 }
 
-fn if_expression() -> impl Parser<char, Span<Expr>, Error = ParseError> {
-    text::keyword("if")
-        .padded()
-        .ignore_then(expr().map(Box::new))
-        .then(expression_block().map_with_span(Span))
-        .then_ignore(text::keyword("else"))
-        .then(expression_block().map_with_span(Span))
-        .map_with_span(|((condition, then_block), else_block), span| {
-            Span(
-                Expr::If {
-                    condition,
-                    then_block,
-                    else_block,
-                },
-                span,
-            )
-        })
-}
-
 fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> {
     let ident = ident();
 
@@ -293,15 +274,6 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
     enum_declaration.or(struct_declaration)
 }
 
-fn expression_block() -> impl Parser<char, ExprBlock, Error = ParseError> {
-    statement()
-        .repeated()
-        .then(expr().map(Box::new).map(Some).or(empty().to(None)))
-        .delimited_by(just('{'), just('}'))
-        .map(|(stmts, end_expr)| ExprBlock { stmts, end_expr })
-        .padded()
-}
-
 fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
     recursive(|stmt| {
         let ident = ident();
@@ -320,12 +292,48 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .padded();
 
         let optional_return_type = return_type.or(empty().to(None));
+        let mut if_expression = Recursive::declare();
+        let mut expression_block = Recursive::declare();
+        if_expression.define(
+            text::keyword("if")
+                .padded()
+                .ignore_then(expression().map(Box::new))
+                .then(expression_block.clone().map_with_span(Span))
+                .then_ignore(text::keyword("else"))
+                .then(expression_block.clone().map_with_span(Span))
+                .map_with_span(|((condition, then_block), else_block), span| {
+                    Span(
+                        Expr::If {
+                            condition,
+                            then_block,
+                            else_block,
+                        },
+                        span,
+                    )
+                }),
+        );
+
+        expression_block.define(
+            stmt.clone()
+                .repeated()
+                .then(
+                    if_expression
+                        .clone()
+                        .or(expression())
+                        .map(Box::new)
+                        .map(Some)
+                        .or(empty().to(None)),
+                )
+                .delimited_by(just('{'), just('}'))
+                .map(|(stmts, end_expr)| ExprBlock { stmts, end_expr })
+                .padded(),
+        );
 
         let function_decl = text::keyword("fn")
             .ignore_then(ident)
             .then(function_parameters)
             .then(optional_return_type)
-            .then(expression_block().map_with_span(Span))
+            .then(expression_block.map_with_span(Span))
             .map_with_span(|(((name, params), return_type), body), span| {
                 Span(
                     Stmt::Function(Function {
@@ -341,8 +349,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
         let let_decl = text::keyword("let")
             .ignore_then(ident)
             .then_ignore(just('='))
-            .then(if_expression().or(expr().padded()))
-            .then_ignore(just(';'))
+            .then(if_expression.or(expression().padded().then_ignore(just(';'))))
             .map_with_span(|(ident, expr), span| Span(Stmt::Let(ident, expr), span));
 
         let block = stmt.repeated().delimited_by(just('{'), just('}'));
@@ -353,7 +360,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .or(empty().to(Vec::new()));
 
         let if_stmt = text::keyword("if")
-            .ignore_then(expr())
+            .ignore_then(expression())
             .then(block)
             .then(optional_else)
             .map_with_span(|((condition, then_block), else_block), span| {
@@ -406,7 +413,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             type_declaration().map_with_span(|decl, span| Span(Stmt::Type(decl), span));
 
         let return_stmt = text::keyword("return")
-            .ignore_then(expr().padded().map(Some).or(empty().to(None)))
+            .ignore_then(expression().padded().map(Some).or(empty().to(None)))
             .then_ignore(just(';'))
             .map_with_span(|expr, span| Span(Stmt::Return(expr), span));
 
@@ -416,7 +423,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .or(return_stmt)
             .or(import_stmt)
             .or(type_declaration)
-            .or(expr()
+            .or(expression()
                 .then_ignore(just(';'))
                 .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)))
             .padded()
@@ -440,79 +447,79 @@ mod tests {
 
     #[test]
     fn test_parse_bool() {
-        insta::assert_yaml_snapshot!(expr().parse("true"));
-        insta::assert_yaml_snapshot!(expr().parse("false"));
+        insta::assert_yaml_snapshot!(expression().parse("true"));
+        insta::assert_yaml_snapshot!(expression().parse("false"));
     }
 
     #[test]
     fn test_parse_int() {
-        insta::assert_yaml_snapshot!(expr().parse("10"));
-        insta::assert_yaml_snapshot!(expr().parse("2"));
+        insta::assert_yaml_snapshot!(expression().parse("10"));
+        insta::assert_yaml_snapshot!(expression().parse("2"));
     }
 
     #[test]
     fn test_parse_float() {
-        insta::assert_yaml_snapshot!(expr().parse("10.5"));
-        insta::assert_yaml_snapshot!(expr().parse("2.1"));
+        insta::assert_yaml_snapshot!(expression().parse("10.5"));
+        insta::assert_yaml_snapshot!(expression().parse("2.1"));
     }
 
     #[test]
     fn test_parse_variable() {
-        insta::assert_yaml_snapshot!(expr().parse("abcd"));
-        insta::assert_yaml_snapshot!(expr().parse("foo_bar"));
-        insta::assert_yaml_snapshot!(expr().parse("fooBar"));
-        insta::assert_yaml_snapshot!(expr().parse("_fooBar"));
-        insta::assert_yaml_snapshot!(expr().parse("_"));
-        insta::assert_yaml_snapshot!(expr().parse("a3"));
+        insta::assert_yaml_snapshot!(expression().parse("abcd"));
+        insta::assert_yaml_snapshot!(expression().parse("foo_bar"));
+        insta::assert_yaml_snapshot!(expression().parse("fooBar"));
+        insta::assert_yaml_snapshot!(expression().parse("_fooBar"));
+        insta::assert_yaml_snapshot!(expression().parse("_"));
+        insta::assert_yaml_snapshot!(expression().parse("a3"));
     }
 
     #[test]
     fn test_parse_struct_literal() {
-        insta::assert_yaml_snapshot!(expr().parse("Foo { a: 10, b: 20 }"));
-        insta::assert_yaml_snapshot!(expr().parse("Foo { a: 10 }"));
+        insta::assert_yaml_snapshot!(expression().parse("Foo { a: 10, b: 20 }"));
+        insta::assert_yaml_snapshot!(expression().parse("Foo { a: 10 }"));
 
-        insta::assert_yaml_snapshot!(expr().parse("Foo::Bar { a: 10, b: 20 }"));
+        insta::assert_yaml_snapshot!(expression().parse("Foo::Bar { a: 10, b: 20 }"));
     }
 
     #[test]
     fn test_parse_unary() {
-        insta::assert_yaml_snapshot!(expr().parse("-10"));
+        insta::assert_yaml_snapshot!(expression().parse("-10"));
 
-        insta::assert_yaml_snapshot!(expr().parse("!bar"));
+        insta::assert_yaml_snapshot!(expression().parse("!bar"));
 
-        insta::assert_yaml_snapshot!(expr().parse("-!10"));
+        insta::assert_yaml_snapshot!(expression().parse("-!10"));
     }
 
     #[test]
     fn test_parse_multiply() {
-        insta::assert_yaml_snapshot!(expr().parse("10 * 11"));
+        insta::assert_yaml_snapshot!(expression().parse("10 * 11"));
 
-        insta::assert_yaml_snapshot!(expr().parse("10 / 11"));
+        insta::assert_yaml_snapshot!(expression().parse("10 / 11"));
 
-        insta::assert_yaml_snapshot!(expr().parse("10 / 11 / 12"));
+        insta::assert_yaml_snapshot!(expression().parse("10 / 11 / 12"));
     }
 
     #[test]
     fn test_parse_addition() {
-        insta::assert_yaml_snapshot!(expr().parse("10 + 11"));
+        insta::assert_yaml_snapshot!(expression().parse("10 + 11"));
 
-        insta::assert_yaml_snapshot!(expr().parse("10 - 11"));
+        insta::assert_yaml_snapshot!(expression().parse("10 - 11"));
     }
 
     #[test]
     fn test_parse_parens() {
-        insta::assert_yaml_snapshot!(expr().parse("foo + (11 * 2)"));
+        insta::assert_yaml_snapshot!(expression().parse("foo + (11 * 2)"));
 
-        insta::assert_yaml_snapshot!(expr().parse("(10 - 11)"));
+        insta::assert_yaml_snapshot!(expression().parse("(10 - 11)"));
     }
 
     #[test]
     fn test_parse_call() {
-        insta::assert_yaml_snapshot!(expr().parse("foo()"));
+        insta::assert_yaml_snapshot!(expression().parse("foo()"));
 
-        insta::assert_yaml_snapshot!(expr().parse("foo(10)"));
+        insta::assert_yaml_snapshot!(expression().parse("foo(10)"));
 
-        insta::assert_yaml_snapshot!(expr().parse("foo(10)(20)"));
+        insta::assert_yaml_snapshot!(expression().parse("foo(10)(20)"));
     }
 
     #[test]
