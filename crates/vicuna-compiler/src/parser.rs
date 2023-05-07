@@ -320,6 +320,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                     if_expression
                         .clone()
                         .or(expression())
+                        .padded()
                         .map(Box::new)
                         .map(Some)
                         .or(empty().to(None)),
