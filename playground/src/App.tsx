@@ -1,5 +1,9 @@
 import { useState } from "react";
 import { run_compiler } from "../../crates/vicuna-wasm/pkg";
+import { Tab, Tabs, TabList, TabPanel } from "react-tabs";
+import "react-tabs/style/react-tabs.css";
+import prettier from "prettier/standalone";
+import babel from "prettier/parser-babel";
 
 function getCodeFromUrl() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -11,16 +15,23 @@ function App() {
   const [code, setCode] = useState(getCodeFromUrl());
 
   const output = run_compiler(code);
+  const formattedJs =
+    output.js &&
+    prettier.format(output.js, {
+      parser: "babel",
+      plugins: [babel],
+    });
+
   return (
     <main>
       <nav className="w-full bg-sky-600">
         <h1 className="p-5 text-lg text-white">Vicuna Playground</h1>
       </nav>
-      <div className="flex bg-slate-200">
-        <div className="p-2 w-1/2 space-y-5">
-          <h1 className="text-xl">Code</h1>
+      <div className="flex bg-slate-200 min-h-screen">
+        <div className="p-2 w-1/2">
+          <h1 className="text-xl py-5">Code</h1>
           <textarea
-            className="w-3/4 font-mono p-5 rounded"
+            className="w-full font-mono p-5 rounded"
             rows={10}
             value={code}
             onChange={(e) => {
@@ -35,27 +46,29 @@ function App() {
           />
         </div>
         <div className="flex flex-col p-2 w-1/2">
-          <div className="space-y-5">
-            <h1 className="text-xl">Output</h1>
-            <div>
-              <h2>JS output</h2>
-              <pre className="w-full overflow-auto p-5 rounded bg-white h-[100px]">
-                {output.js || ""}
+          <Tabs>
+            <TabList>
+              <Tab>Output</Tab>
+              <Tab>AST</Tab>
+              <Tab>Errors</Tab>
+            </TabList>
+
+            <TabPanel>
+              <pre className="w-full overflow-auto p-5 rounded bg-white">
+                {formattedJs || ""}
               </pre>
-            </div>
-            <div>
-              <h2>AST</h2>
-              <pre className="w-full overflow-auto p-5 rounded bg-white h-[100px]">
+            </TabPanel>
+            <TabPanel>
+              <pre className="w-full overflow-auto p-5 rounded bg-white">
                 {output.ast || ""}
               </pre>
-            </div>
-            <div>
-              <h2>Errors</h2>
-              <pre className="w-full overflow-auto p-5 rounded bg-white h-[100px]">
+            </TabPanel>
+            <TabPanel>
+              <pre className="w-full overflow-auto p-5 rounded bg-white">
                 {output.errors || "No errors"}
               </pre>
-            </div>
-          </div>
+            </TabPanel>
+          </Tabs>
         </div>
       </div>
     </main>
