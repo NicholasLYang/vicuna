@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, Function, ImportType, MatchCase, PostFix, Program, Span, Stmt,
-    TypeDeclaration, TypeSig, UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, Function, ImportType, MatchBindings, MatchCase, PostFix, Program,
+    Span, Stmt, TypeDeclaration, TypeSig, UnaryOp, Value,
 };
 use chumsky::prelude::*;
 use miette::Diagnostic;
@@ -91,7 +91,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
 
         let string = string().map_with_span(|s, span| Span(Expr::Value(Value::String(s)), span));
 
-        let fields = ident
+        let named_fields = ident
             .map_with_span(Span)
             .then_ignore(just(':'))
             .then(expr.clone())
@@ -99,11 +99,26 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .allow_trailing()
             .delimited_by(just('{'), just('}'));
 
+        let tuple_fields = expr
+            .clone()
+            .separated_by(just(','))
+            .allow_trailing()
+            .delimited_by(just('('), just(')'))
+            .map(|fields| {
+                fields
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, expr): (usize, Span<Expr>)| {
+                        (Span(idx.to_string(), expr.1.clone()), expr)
+                    })
+                    .collect()
+            });
+
         let enum_literal = ident
             .map_with_span(Span)
             .then_ignore(just("::"))
             .then(ident.map_with_span(Span))
-            .then(fields.clone())
+            .then(named_fields.clone().or(tuple_fields.clone()))
             .map_with_span(|((enum_name, variant_name), v), span| {
                 Span(
                     Expr::Enum {
@@ -118,7 +133,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
         let struct_literal =
             ident
                 .map_with_span(Span)
-                .then(fields)
+                .then(named_fields)
                 .map_with_span(|(name, fields), span| {
                     Span(Expr::Struct(name, fields.into_iter().collect()), span)
                 });
@@ -244,19 +259,36 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
 
     let field = ident.then_ignore(just(':')).then(type_signature()).padded();
 
-    let fields = field
+    let named_fields = field
         .separated_by(just(','))
         .allow_trailing()
         .padded()
         .delimited_by(just('{'), just('}'))
         .map(|fields| fields.into_iter().collect::<Vec<_>>());
 
+    let tuple_fields = type_signature()
+        .separated_by(just(','))
+        .allow_trailing()
+        .padded()
+        .delimited_by(just('('), just(')'))
+        .map(|fields| {
+            fields
+                .into_iter()
+                .enumerate()
+                // We give the index the same span as the field since
+                // any relevant error will be with the field
+                .map(|(idx, field)| (Span(idx.to_string(), field.1.clone()), field))
+                .collect::<Vec<_>>()
+        });
+
     let struct_declaration = text::keyword("struct")
         .ignore_then(ident)
-        .then(fields.clone())
+        .then(named_fields.clone().or(tuple_fields.clone()))
         .map(|(name, fields)| TypeDeclaration::Struct { name, fields });
 
-    let enum_variant = ident.then(fields.or(empty().to(Vec::new()))).padded();
+    let enum_variant = ident
+        .then(named_fields.or(tuple_fields).or(empty().to(Vec::new())))
+        .padded();
 
     let enum_declaration = text::keyword("enum")
         .ignore_then(ident)
@@ -315,16 +347,34 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 }),
         );
 
+        let named_bindings = ident
+            .clone()
+            .then(
+                empty()
+                    .to(None)
+                    .or(just(':').ignore_then(ident.clone()).map(Some)),
+            )
+            .separated_by(just(','))
+            .allow_trailing()
+            .delimited_by(just('{'), just('}'))
+            .map(|bindings| MatchBindings::Named(bindings.into_iter().collect::<Vec<_>>()));
+
+        let tuple_bindings = ident
+            .clone()
+            .separated_by(just(','))
+            .allow_trailing()
+            .delimited_by(just('('), just(')'))
+            .map(|bindings| MatchBindings::Tuple(bindings.into_iter().collect::<Vec<_>>()));
+
         let match_pattern = ident
             .clone()
             .then_ignore(just("::"))
             .then(ident.clone())
             .then(
-                ident
-                    .clone()
-                    .separated_by(just(','))
-                    .allow_trailing()
-                    .delimited_by(just('{'), just('}')),
+                named_bindings
+                    .or(tuple_bindings)
+                    .map(Some)
+                    .or(empty().to(None)),
             )
             .padded()
             .map_with_span(|((enum_name, variant_name), fields), span| {

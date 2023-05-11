@@ -1,14 +1,14 @@
 enum Result {
-  Ok { value: i32 },
-  Err { error: string }
+  Ok(i32),
+  Err(string)
 }
 
-let a = Result::Ok { value: 10 };
+let a = Result::Ok(10);
 let b = match a {
-  Result::Ok { value } => {
+  Result::Ok(value) => {
     print(value);
   },
-  Result::Err { error } => {
+  Result::Err(error) => {
     print(error);
   }
 }

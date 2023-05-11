@@ -11,8 +11,8 @@
 //!  - Borrow checking
 //!
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, Function, ImportType, PostFix, Program, Span, Stmt, TypeDeclaration,
-    TypeSig, UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, Function, ImportType, MatchBindings, PostFix, Program, Span, Stmt,
+    TypeDeclaration, TypeSig, UnaryOp, Value,
 };
 use miette::Diagnostic;
 use serde::Serialize;
@@ -692,32 +692,69 @@ impl TypeChecker {
                         return None;
                     };
 
+                    let Some(received_fields) = &case.0.fields else {
+                        if !expected_fields.is_empty() {
+                            self.errors.push(TypeError::FieldsMismatch {
+                                expected_fields: expected_fields.clone(),
+                                received_fields: HashMap::new(),
+                                span: case.0.variant_name.1.clone(),
+                            });
+                        }
+                        continue;
+                    };
+
                     // TODO: Handle rest expressions
-                    if expected_fields.len() != case.0.fields.len() {
+                    if expected_fields.len() != received_fields.len() {
+                        let received_fields = match received_fields {
+                            MatchBindings::Tuple(fields) => fields
+                                .into_iter()
+                                .map(|field| (field.0.clone(), InferredType::Unknown))
+                                .collect(),
+                            MatchBindings::Named(fields) => fields
+                                .into_iter()
+                                .map(|(name, _)| (name.0.clone(), InferredType::Unknown))
+                                .collect(),
+                        };
+
                         self.errors.push(TypeError::FieldsMismatch {
                             expected_fields: expected_fields.clone(),
-                            received_fields: case
-                                .0
-                                .fields
-                                .iter()
-                                .map(|name| (name.0.clone(), InferredType::Unknown))
-                                .collect(),
+                            received_fields,
                             span: case.0.variant_name.1.clone(),
                         });
                     }
 
                     self.symbol_table.enter_scope();
 
-                    for field in &case.0.fields {
-                        if let Some(expected_field_ty) = expected_fields.get(&field.0) {
-                            self.symbol_table
-                                .insert(field.0.clone(), expected_field_ty.clone());
-                        } else {
-                            self.errors.push(TypeError::UndefinedField {
-                                struct_name: format!("{}::{}", name, case.0.variant_name.0),
-                                field_name: field.0.clone(),
-                                span: field.1.clone(),
-                            });
+                    match received_fields {
+                        MatchBindings::Tuple(fields) => {
+                            for (idx, field) in fields.into_iter().enumerate() {
+                                if let Some(expected_field_ty) =
+                                    expected_fields.get(&idx.to_string())
+                                {
+                                    self.symbol_table
+                                        .insert(field.0.clone(), expected_field_ty.clone());
+                                } else {
+                                    self.errors.push(TypeError::UndefinedField {
+                                        struct_name: format!("{}::{}", name, case.0.variant_name.0),
+                                        field_name: field.0.clone(),
+                                        span: field.1.clone(),
+                                    });
+                                }
+                            }
+                        }
+                        MatchBindings::Named(fields) => {
+                            for (field, rename) in fields {
+                                if let Some(expected_field_ty) = expected_fields.get(&field.0) {
+                                    let name = rename.as_ref().unwrap_or(&field).0.clone();
+                                    self.symbol_table.insert(name, expected_field_ty.clone());
+                                } else {
+                                    self.errors.push(TypeError::UndefinedField {
+                                        struct_name: format!("{}::{}", name, case.0.variant_name.0),
+                                        field_name: field.0.clone(),
+                                        span: field.1.clone(),
+                                    });
+                                }
+                            }
                         }
                     }
 

@@ -82,3 +82,9 @@ impl Foo for i32 {
     }
 }
 ```
+
+# TODO
+- Add nested pattern matching
+- Add completeness checking for pattern matching
+- Add tuple enum variants
+- Add empty enum variants

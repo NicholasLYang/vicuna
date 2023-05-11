@@ -1,5 +1,6 @@
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, Function, ImportType, PostFix, Program, Span, Stmt, UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, Function, ImportType, MatchBindings, PostFix, Program, Span, Stmt,
+    UnaryOp, Value,
 };
 use anyhow::Result;
 use std::io::Write;
@@ -84,8 +85,8 @@ impl<T: Write> JsBackend<T> {
                 );
 
                 match body.0.end_expr.as_deref() {
-                    Some(if_expr @ Span(Expr::If { .. }, _)) => {
-                        self.emit_expr(if_expr)?;
+                    Some(block_expr @ Span(Expr::If { .. } | Expr::Match { .. }, _)) => {
+                        self.emit_expr(block_expr)?;
                     }
                     Some(end_expr) => {
                         self.output.write_all(b"return ")?;
@@ -278,19 +279,43 @@ impl<T: Write> JsBackend<T> {
                     self.output.write_all(b"case \"")?;
                     self.output.write_all(case.0.variant_name.0.as_bytes())?;
                     self.output.write_all(b"\": {\n")?;
-                    for name in case.0.fields.iter() {
-                        self.output.write_all(b"const ")?;
-                        self.output.write_all(name.0.as_bytes())?;
-                        self.output.write_all(b" = ")?;
-                        self.output.write_all(b"__match__.")?;
-                        self.output.write_all(name.0.as_bytes())?;
-                        self.output.write_all(b";\n")?;
+
+                    if let Some(bindings) = &case.0.fields {
+                        self.emit_match_bindings(bindings)?;
                     }
+
                     self.emit_expression_block(body)?;
                     self.output.write_all(b"break;\n")?;
                     self.output.write_all(b"}\n")?;
                 }
                 self.output.write_all(b"}")?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn emit_match_bindings(&mut self, bindings: &MatchBindings) -> Result<()> {
+        match bindings {
+            MatchBindings::Tuple(fields) => {
+                for (idx, field) in fields.into_iter().enumerate() {
+                    self.output.write_all(b"const ")?;
+                    self.output.write_all(field.0.as_bytes())?;
+                    self.output.write_all(b" = __match__[")?;
+                    self.output.write_all(idx.to_string().as_bytes())?;
+                    self.output.write_all(b"];\n")?;
+                }
+            }
+            MatchBindings::Named(fields) => {
+                for (field, rename) in fields {
+                    let name = rename.as_ref().unwrap_or(&field);
+
+                    self.output.write_all(b"const ")?;
+                    self.output.write_all(name.0.as_bytes())?;
+                    self.output.write_all(b" = __match__.")?;
+                    self.output.write_all(field.0.as_bytes())?;
+                    self.output.write_all(b";\n")?;
+                }
             }
         }
 
@@ -316,6 +341,7 @@ impl<T: Write> JsBackend<T> {
                     ExprBlockState::Return => {
                         self.output.write_all(b"return ")?;
                         self.emit_expr(end_expr)?;
+                        self.output.write_all(b";\n")?;
                     }
                     ExprBlockState::Binding(var) => {
                         self.output.write_all(var.as_bytes())?;

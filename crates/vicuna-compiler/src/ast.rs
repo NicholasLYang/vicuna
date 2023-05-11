@@ -111,7 +111,24 @@ pub enum Expr {
 pub struct MatchCase {
     pub enum_name: Span<String>,
     pub variant_name: Span<String>,
-    pub fields: Vec<Span<String>>,
+    pub fields: Option<MatchBindings>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum MatchBindings {
+    // Tuple(field1, field2, field3) => { ... }
+    Tuple(Vec<Span<String>>),
+    // Struct { field1, field2, field3: rename } => { ... }
+    Named(Vec<(Span<String>, Option<Span<String>>)>),
+}
+
+impl MatchBindings {
+    pub fn len(&self) -> usize {
+        match self {
+            MatchBindings::Tuple(fields) => fields.len(),
+            MatchBindings::Named(fields) => fields.len(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
