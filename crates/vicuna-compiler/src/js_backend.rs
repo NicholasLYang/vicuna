@@ -28,7 +28,13 @@ impl<T: Write> JsBackend<T> {
         }
     }
 
+    // Emits the standard preamble for Vicuna
+    pub fn emit_preamble(&mut self) -> Result<()> {
+        Ok(self.output.write_all(b"let __match__;\n")?)
+    }
+
     pub fn emit_program(&mut self, program: &Program) -> Result<()> {
+        self.emit_preamble()?;
         for stmt in &program.statements {
             self.emit_stmt(stmt)?;
         }
@@ -256,10 +262,35 @@ impl<T: Write> JsBackend<T> {
             } => {
                 self.output.write_all(b"if (")?;
                 self.emit_expr(condition)?;
-                self.output.write_all(b")\n")?;
+                self.output.write_all(b") {")?;
                 self.emit_expression_block(then_block)?;
-                self.output.write_all(b" else\n")?;
+                self.output.write_all(b"} else\n")?;
                 self.emit_expression_block(else_block)?;
+                self.output.write_all(b"}")?;
+            }
+            Expr::Match { expr, cases } => {
+                self.output.write_all(b"__match__ = ")?;
+                self.emit_expr(expr)?;
+                self.output.write_all(b";\n")?;
+
+                self.output.write_all(b"switch (__match__.__type__) {\n")?;
+                for (case, body) in cases {
+                    self.output.write_all(b"case \"")?;
+                    self.output.write_all(case.0.variant_name.0.as_bytes())?;
+                    self.output.write_all(b"\": {\n")?;
+                    for name in case.0.fields.iter() {
+                        self.output.write_all(b"const ")?;
+                        self.output.write_all(name.0.as_bytes())?;
+                        self.output.write_all(b" = ")?;
+                        self.output.write_all(b"__match__.")?;
+                        self.output.write_all(name.0.as_bytes())?;
+                        self.output.write_all(b";\n")?;
+                    }
+                    self.emit_expression_block(body)?;
+                    self.output.write_all(b"break;\n")?;
+                    self.output.write_all(b"}\n")?;
+                }
+                self.output.write_all(b"}")?;
             }
         }
 
@@ -267,7 +298,6 @@ impl<T: Write> JsBackend<T> {
     }
 
     fn emit_expression_block(&mut self, block: &Span<ExprBlock>) -> Result<()> {
-        self.output.write_all(b"{")?;
         for stmt in &block.0.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -296,7 +326,6 @@ impl<T: Write> JsBackend<T> {
             }
             _ => {}
         }
-        self.output.write_all(b"}")?;
 
         Ok(())
     }

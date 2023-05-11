@@ -1,0 +1,14 @@
+enum Result {
+  Ok { value: i32 },
+  Err { error: string }
+}
+
+let a = Result::Ok { value: 10 };
+let b = match a {
+  Result::Ok { value } => {
+    print(value);
+  },
+  Result::Err { error } => {
+    print(error);
+  }
+}

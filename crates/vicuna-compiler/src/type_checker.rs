@@ -129,12 +129,22 @@ impl<T> SymbolTable<T> {
 
         None
     }
+
+    fn lookup_mut(&mut self, name: &Name) -> Option<&mut T> {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(ty) = scope.get_mut(name) {
+                return Some(ty);
+            }
+        }
+
+        None
+    }
 }
 
 pub struct TypeChecker {
     symbol_table: SymbolTable<Type>,
     defined_structs: SymbolTable<HashMap<Name, Type>>,
-    defined_enums: SymbolTable<Vec<(Span<Name>, HashMap<Name, Type>)>>,
+    defined_enums: SymbolTable<HashMap<Name, HashMap<Name, Type>>>,
     return_type: Option<Type>,
     pub(crate) errors: Vec<TypeError>,
 }
@@ -167,8 +177,8 @@ pub enum TypeError {
     },
     #[error("Undefined variable {0}")]
     UndefinedVariable(Name, #[label] Range<usize>),
-    #[error("Undefined struct {0}")]
-    UndefinedStruct(Name, #[label] Range<usize>),
+    #[error("Undefined type {0}")]
+    UndefinedType(Name, #[label] Range<usize>),
     #[error("Expected {0} args but received {1}")]
     ArityMismatch(usize, usize, #[label] Range<usize>),
     #[error("Type {0} is not callable")]
@@ -177,6 +187,8 @@ pub enum TypeError {
     NotStruct(Type, #[label] Range<usize>),
     #[error("Type {0} is not an array")]
     NotArray(Type, #[label] Range<usize>),
+    #[error("Type {0} is not an enum")]
+    NotEnum(Type, #[label] Range<usize>),
     #[error("Cannot return outside a function")]
     ReturnOutsideFunction(#[label] Range<usize>),
     #[error("Struct {struct_name} does not have field {field_name}")]
@@ -279,7 +291,7 @@ impl TypeChecker {
                         .iter()
                         .map(|(name, fields)| {
                             (
-                                name.clone(),
+                                name.0.clone(),
                                 fields
                                     .iter()
                                     .map(|(name, ty)| (name.0.clone(), ty.into()))
@@ -599,7 +611,7 @@ impl TypeChecker {
             }
             Expr::Struct(name, literal_fields) => {
                 let Some(struct_type_fields) = self.defined_structs.lookup(&name.0).cloned() else {
-                    self.errors.push(TypeError::UndefinedStruct(name.0.clone(), expr.1.clone()));
+                    self.errors.push(TypeError::UndefinedType(name.0.clone(), expr.1.clone()));
                     return None;
                 };
 
@@ -614,7 +626,7 @@ impl TypeChecker {
             } => {
                 let enum_variants = self.defined_enums.lookup(&enum_name.0);
 
-                let Some(variant_fields) = enum_variants.and_then(|enum_variants| enum_variants.iter().find(|(name, _)| name.0 == variant_name.0)).cloned() else {
+                let Some(variant_fields) = enum_variants.and_then(|enum_variants| enum_variants.get(&variant_name.0)).cloned() else {
                     self.errors.push(TypeError::UndefinedVariant {
                         enum_name: enum_name.0.clone(),
                         variant_name: variant_name.0.clone(),
@@ -623,9 +635,9 @@ impl TypeChecker {
                     return None;
                 };
 
-                self.compare_fields(&variant_name.0, expr.1.clone(), fields, &variant_fields.1)?;
+                self.compare_fields(&variant_name.0, expr.1.clone(), fields, &variant_fields)?;
 
-                Some(Type::Named(variant_name.0.clone()))
+                Some(Type::Named(enum_name.0.clone()))
             }
             Expr::If {
                 condition,
@@ -653,6 +665,81 @@ impl TypeChecker {
                 }
 
                 Some(then_ty)
+            }
+            Expr::Match { expr, cases } => {
+                let expr_ty = self.check_expr(expr)?;
+                // TODO: Handle non-enum pattern matching
+                let Type::Named(name) = expr_ty else {
+                    self.errors.push(TypeError::NotEnum(expr_ty, expr.1.clone()));
+                    return None;
+                };
+
+                // Type of each case block must be the same
+                let mut case_type = None;
+
+                for (case, block) in cases {
+                    let Some(enum_variants) = self.defined_enums.lookup_mut(&name) else {
+                        self.errors.push(TypeError::UndefinedType(name, expr.1.clone()));
+                        return None;
+                    };
+
+                    let Some(expected_fields) = enum_variants.remove(&case.0.variant_name.0) else {
+                        self.errors.push(TypeError::UndefinedVariant {
+                            enum_name: name.clone(),
+                            variant_name: case.0.variant_name.0.clone(),
+                            span: case.0.variant_name.1.clone(),
+                        });
+                        return None;
+                    };
+
+                    // TODO: Handle rest expressions
+                    if expected_fields.len() != case.0.fields.len() {
+                        self.errors.push(TypeError::FieldsMismatch {
+                            expected_fields: expected_fields.clone(),
+                            received_fields: case
+                                .0
+                                .fields
+                                .iter()
+                                .map(|name| (name.0.clone(), InferredType::Unknown))
+                                .collect(),
+                            span: case.0.variant_name.1.clone(),
+                        });
+                    }
+
+                    self.symbol_table.enter_scope();
+
+                    for field in &case.0.fields {
+                        if let Some(expected_field_ty) = expected_fields.get(&field.0) {
+                            self.symbol_table
+                                .insert(field.0.clone(), expected_field_ty.clone());
+                        } else {
+                            self.errors.push(TypeError::UndefinedField {
+                                struct_name: format!("{}::{}", name, case.0.variant_name.0),
+                                field_name: field.0.clone(),
+                                span: field.1.clone(),
+                            });
+                        }
+                    }
+
+                    enum_variants.insert(case.0.variant_name.0.clone(), expected_fields);
+
+                    let ty = self.check_expression_block(block)?;
+                    if let Some(expected_ty) = &case_type {
+                        if &ty != expected_ty {
+                            self.errors.push(TypeError::TypeMismatch {
+                                expected_ty: expected_ty.clone(),
+                                received_ty: ty,
+                                span: block.1.clone(),
+                            });
+                        }
+                    } else {
+                        case_type = Some(ty);
+                    }
+
+                    self.symbol_table.exit_scope();
+                }
+
+                case_type
             }
         }
     }

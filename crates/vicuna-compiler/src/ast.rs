@@ -101,6 +101,17 @@ pub enum Expr {
         then_block: Span<ExprBlock>,
         else_block: Span<ExprBlock>,
     },
+    Match {
+        expr: Box<Span<Expr>>,
+        cases: Vec<(Span<MatchCase>, Span<ExprBlock>)>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MatchCase {
+    pub enum_name: Span<String>,
+    pub variant_name: Span<String>,
+    pub fields: Vec<Span<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

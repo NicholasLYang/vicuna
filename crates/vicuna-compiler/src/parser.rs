@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, Function, ImportType, PostFix, Program, Span, Stmt, TypeDeclaration,
-    TypeSig, UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, Function, ImportType, MatchCase, PostFix, Program, Span, Stmt,
+    TypeDeclaration, TypeSig, UnaryOp, Value,
 };
 use chumsky::prelude::*;
 use miette::Diagnostic;
@@ -293,7 +293,9 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
 
         let optional_return_type = return_type.or(empty().to(None));
         let mut if_expression = Recursive::declare();
+        let mut match_expression = Recursive::declare();
         let mut expression_block = Recursive::declare();
+
         if_expression.define(
             text::keyword("if")
                 .padded()
@@ -313,12 +315,53 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 }),
         );
 
+        let match_pattern = ident
+            .clone()
+            .then_ignore(just("::"))
+            .then(ident.clone())
+            .then(
+                ident
+                    .clone()
+                    .separated_by(just(','))
+                    .allow_trailing()
+                    .delimited_by(just('{'), just('}')),
+            )
+            .padded()
+            .map_with_span(|((enum_name, variant_name), fields), span| {
+                Span(
+                    MatchCase {
+                        enum_name,
+                        variant_name,
+                        fields,
+                    },
+                    span,
+                )
+            });
+
+        match_expression.define(
+            text::keyword("match")
+                .padded()
+                .ignore_then(expression().map(Box::new))
+                .then(
+                    match_pattern
+                        .then_ignore(just("=>"))
+                        .then(expression_block.clone().map_with_span(Span))
+                        .padded()
+                        .separated_by(just(','))
+                        .allow_trailing()
+                        .padded()
+                        .delimited_by(just('{'), just('}')),
+                )
+                .map_with_span(|(expr, cases), span| Span(Expr::Match { expr, cases }, span)),
+        );
+
         expression_block.define(
             stmt.clone()
                 .repeated()
                 .then(
                     if_expression
                         .clone()
+                        .or(match_expression.clone())
                         .or(expression())
                         .padded()
                         .map(Box::new)
@@ -350,7 +393,11 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
         let let_decl = text::keyword("let")
             .ignore_then(ident)
             .then_ignore(just('='))
-            .then(if_expression.or(expression().padded().then_ignore(just(';'))))
+            .then(
+                if_expression
+                    .or(match_expression)
+                    .or(expression().padded().then_ignore(just(';'))),
+            )
             .map_with_span(|(ident, expr), span| Span(Stmt::Let(ident, expr), span));
 
         let block = stmt.repeated().delimited_by(just('{'), just('}'));
