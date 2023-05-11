@@ -44,8 +44,8 @@ impl<T: Write> JsBackend<T> {
 
     fn emit_stmt(&mut self, stmt: &Span<Stmt>) -> Result<()> {
         match &stmt.0 {
-            Stmt::Let(name, if_expr @ Span(Expr::If { .. }, _)) => {
-                write!(self.output, "let {};", name.0)?;
+            Stmt::Let(name, if_expr @ Span(Expr::If { .. } | Expr::Match { .. }, _)) => {
+                write!(self.output, "let {};\n", name.0)?;
                 let old_expression_block_state = mem::replace(
                     &mut self.expression_block_state,
                     Some(ExprBlockState::Binding(name.0.clone())),
