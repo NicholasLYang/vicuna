@@ -70,14 +70,14 @@ pub struct ExprBlock {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Expr {
     Value(Value),
-    Variable(String),
+    Variable(Vec<Span<String>>),
     // Combination of call, i.e. `foo(10)`, field access, i.e. `foo.bar`,
     // and index access, i.e. `foo[10]`.
     // This could probably be optimized by storing `PostFix` as a Vec
     PostFix(Box<Span<Expr>>, Span<PostFix>),
     Binary(Span<BinaryOp>, Box<Span<Expr>>, Box<Span<Expr>>),
     Unary(Span<UnaryOp>, Box<Span<Expr>>),
-    Struct(Span<String>, Vec<(Span<String>, Span<Expr>)>),
+    Struct(Span<Vec<Span<String>>>, Vec<(Span<String>, Span<Expr>)>),
     Enum {
         enum_name: Span<String>,
         variant_name: Span<String>,
@@ -109,8 +109,7 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MatchCase {
-    pub enum_name: Span<String>,
-    pub variant_name: Span<String>,
+    pub name: Span<Vec<Span<String>>>,
     pub fields: Option<MatchBindings>,
 }
 

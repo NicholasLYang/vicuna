@@ -166,12 +166,13 @@ impl<T: Write> JsBackend<T> {
             Expr::Value(value) => {
                 self.emit_value(value)?;
             }
-            Expr::Variable(name) => {
+            Expr::Variable(mut name) => {
                 // TODO: Figure out better way of mapping special names
-                if name == "print" {
+                if name.len() == 1 && name.first().map_or(false, |name| &name.0 == "print") {
                     self.output.write_all(b"console.log")?;
                 } else {
-                    self.output.write_all(name.as_bytes())?;
+                    self.output
+                        .write_all(name.pop().expect("at least one name").0.as_bytes())?;
                 }
             }
             Expr::PostFix(callee, Span(PostFix::Args(args), _)) => {
@@ -277,7 +278,8 @@ impl<T: Write> JsBackend<T> {
                 self.output.write_all(b"switch (__match__.__type__) {\n")?;
                 for (case, body) in cases {
                     self.output.write_all(b"case \"")?;
-                    self.output.write_all(case.0.variant_name.0.as_bytes())?;
+                    let variant_name = case.0.name.0.last().expect("at least one");
+                    self.output.write_all(variant_name.0.as_bytes())?;
                     self.output.write_all(b"\": {\n")?;
 
                     if let Some(bindings) = &case.0.fields {
@@ -347,6 +349,7 @@ impl<T: Write> JsBackend<T> {
                         self.output.write_all(var.as_bytes())?;
                         self.output.write_all(b" = ")?;
                         self.emit_expr(end_expr)?;
+                        self.output.write_all(b";\n")?;
                     }
                 }
             }

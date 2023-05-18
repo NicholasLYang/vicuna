@@ -67,6 +67,7 @@ fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
 
 pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clone {
     let ident = text::ident().padded();
+    let namespaced_identifier = namespaced_identifier();
     recursive(|expr| {
         let int = text::int(10)
             .map_with_span(|s: String, span| {
@@ -130,13 +131,12 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
                 )
             });
 
-        let struct_literal =
-            ident
-                .map_with_span(Span)
-                .then(named_fields)
-                .map_with_span(|(name, fields), span| {
-                    Span(Expr::Struct(name, fields.into_iter().collect()), span)
-                });
+        let struct_literal = namespaced_identifier
+            .clone()
+            .then(named_fields)
+            .map_with_span(|(name, fields), span| {
+                Span(Expr::Struct(name, fields.into_iter().collect()), span)
+            });
 
         let atom = float
             .or(int)
@@ -145,7 +145,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .or(string)
             .or(enum_literal)
             .or(struct_literal)
-            .or(ident.map_with_span(|i, span| Span(Expr::Variable(i), span)))
+            .or(namespaced_identifier.map(|i| Span(Expr::Variable(i.0), i.1)))
             .padded();
 
         let args = expr
@@ -237,7 +237,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
 }
 
 fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Clone {
-    ident().map(|id| {
+    identifier().map(|id| {
         let sig = match id.0.as_str() {
             "i32" => TypeSig::I32,
             "f32" => TypeSig::F32,
@@ -250,12 +250,20 @@ fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Cl
     })
 }
 
-fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone + Copy {
+fn identifier() -> impl Parser<char, Span<String>, Error = ParseError> + Clone + Copy {
     text::ident().padded().map_with_span(Span)
 }
 
+fn namespaced_identifier(
+) -> impl Parser<char, Span<Vec<Span<String>>>, Error = ParseError> + Clone + Copy {
+    identifier()
+        .separated_by(just("::"))
+        .at_least(1)
+        .map_with_span(|parts, span| Span(parts, span))
+}
+
 fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> {
-    let ident = ident();
+    let ident = identifier();
 
     let field = ident.then_ignore(just(':')).then(type_signature()).padded();
 
@@ -308,7 +316,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
 
 fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
     recursive(|stmt| {
-        let ident = ident();
+        let ident = identifier();
 
         let function_parameters = ident
             .then_ignore(just(':'))
@@ -366,10 +374,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .delimited_by(just('('), just(')'))
             .map(|bindings| MatchBindings::Tuple(bindings.into_iter().collect::<Vec<_>>()));
 
-        let match_pattern = ident
-            .clone()
-            .then_ignore(just("::"))
-            .then(ident.clone())
+        let match_pattern = namespaced_identifier()
             .then(
                 named_bindings
                     .or(tuple_bindings)
@@ -377,16 +382,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                     .or(empty().to(None)),
             )
             .padded()
-            .map_with_span(|((enum_name, variant_name), fields), span| {
-                Span(
-                    MatchCase {
-                        enum_name,
-                        variant_name,
-                        fields,
-                    },
-                    span,
-                )
-            });
+            .map_with_span(|(name, fields), span| Span(MatchCase { name, fields }, span));
 
         match_expression.define(
             text::keyword("match")
