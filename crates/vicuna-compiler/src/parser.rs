@@ -472,6 +472,13 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 )
             });
 
+        let use_stmt = text::keyword("use")
+            .ignore_then(ident)
+            .then_ignore(just("::"))
+            .then(ident.or(just("*").map_with_span(|s, span| Span(s.to_string(), span))))
+            .then_ignore(just(';'))
+            .map_with_span(|(module, name), span| Span(Stmt::Use { module, name }, span));
+
         let import_stmt = text::keyword("import")
             .padded()
             .ignore_then(
@@ -521,6 +528,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .or(return_stmt)
             .or(import_stmt)
             .or(type_declaration)
+            .or(use_stmt)
             .or(expression()
                 .then_ignore(just(';'))
                 .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)))
@@ -622,20 +630,20 @@ mod tests {
 
     #[test]
     fn test_parse_function() {
-        insta::assert_yaml_snapshot!(stmt().parse("fn foo() { 20 }"));
+        insta::assert_yaml_snapshot!(statement().parse("fn foo() { 20 }"));
 
-        insta::assert_yaml_snapshot!(stmt().parse("fn foo() -> i32 { 20 }"));
+        insta::assert_yaml_snapshot!(statement().parse("fn foo() -> i32 { 20 }"));
 
-        insta::assert_yaml_snapshot!(stmt().parse("fn foo() { let name = 10; }"));
+        insta::assert_yaml_snapshot!(statement().parse("fn foo() { let name = 10; }"));
     }
 
     #[test]
     fn test_parse_statement() {
-        insta::assert_yaml_snapshot!(stmt().parse("let a = 10;"));
+        insta::assert_yaml_snapshot!(statement().parse("let a = 10;"));
 
-        insta::assert_yaml_snapshot!(stmt().parse("let a = if b { 10 } else { 20 }"));
+        insta::assert_yaml_snapshot!(statement().parse("let a = if b { 10 } else { 20 }"));
 
-        insta::assert_yaml_snapshot!(stmt().repeated().parse(
+        insta::assert_yaml_snapshot!(statement().repeated().parse(
             "let a = if b { 10 } else { 20 }
             10 + 11;
             let h = foobar;"
@@ -644,7 +652,7 @@ mod tests {
 
     #[test]
     fn test_parse_if_statement() {
-        insta::assert_yaml_snapshot!(stmt().parse(
+        insta::assert_yaml_snapshot!(statement().parse(
             "if b {
                let a = 10;
              } else {
@@ -652,27 +660,27 @@ mod tests {
              }"
         ));
 
-        insta::assert_yaml_snapshot!(stmt().parse("if b { 10; }"));
+        insta::assert_yaml_snapshot!(statement().parse("if b { 10; }"));
     }
 
     #[test]
     fn test_parse_import_statement() {
-        insta::assert_yaml_snapshot!(stmt().parse(r#"import foo from "./bar";"#));
+        insta::assert_yaml_snapshot!(statement().parse(r#"import foo from "./bar";"#));
 
-        insta::assert_yaml_snapshot!(stmt().parse(r#"import { foo, bar } from "./baz";"#));
+        insta::assert_yaml_snapshot!(statement().parse(r#"import { foo, bar } from "./baz";"#));
 
-        insta::assert_yaml_snapshot!(stmt().parse(r#"import qux, { foo, bar } from "./baz";"#));
+        insta::assert_yaml_snapshot!(statement().parse(r#"import qux, { foo, bar } from "./baz";"#));
 
         insta::assert_yaml_snapshot!(
-            stmt().parse(r#"import extern { foo, bar } from "https://example.com/baz";"#)
+            statement().parse(r#"import extern { foo, bar } from "https://example.com/baz";"#)
         );
     }
 
     #[test]
     fn test_parse_return_statement() {
-        insta::assert_yaml_snapshot!(stmt().parse("return 10;"));
+        insta::assert_yaml_snapshot!(statement().parse("return 10;"));
 
-        insta::assert_yaml_snapshot!(stmt().parse("return;"));
+        insta::assert_yaml_snapshot!(statement().parse("return;"));
     }
 
     #[test]
@@ -693,5 +701,12 @@ mod tests {
         insta::assert_yaml_snapshot!(type_declaration().parse("enum Foo { A }"));
 
         insta::assert_yaml_snapshot!(type_declaration().parse("enum Foo { A { foo: string } }"));
+    }
+
+    #[test]
+    fn test_parse_use_statement() {
+        insta::assert_yaml_snapshot!(statement().parse("use Foo::Bar;"));
+
+        insta::assert_yaml_snapshot!(statement().parse("use Foo::*;"));
     }
 }

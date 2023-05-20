@@ -188,7 +188,7 @@ pub enum TypeError {
     #[error("Type {0} is not an array")]
     NotArray(Type, #[label] Range<usize>),
     #[error("Type {0} is not an enum")]
-    NotEnum(Type, #[label] Range<usize>),
+    NotEnum(String, #[label] Range<usize>),
     #[error("Cannot return outside a function")]
     ReturnOutsideFunction(#[label] Range<usize>),
     #[error("Struct {struct_name} does not have field {field_name}")]
@@ -427,6 +427,30 @@ impl TypeChecker {
             }
             Stmt::Type(decl) => {
                 self.add_type_declaration(decl);
+            }
+            Stmt::Use { module, name } => {
+                let Some(variants) = self.defined_enums.lookup(&module.0) else {
+                    self.errors.push(TypeError::NotEnum(module.0.clone(), stmt.1.clone()));
+                    return None;
+                };
+
+                if &name.0 == "*" {
+                    for (variant_name, variant_fields) in variants {
+                        self.defined_structs
+                            .insert(variant_name.clone(), variant_fields.clone());
+                    }
+                } else {
+                    let Some(variant) = variants.get(&name.0) else {
+                        self.errors.push(TypeError::UndefinedVariant {
+                            enum_name: module.0.clone(),
+                            variant_name: name.0.clone(),
+                            span: stmt.1.clone(),
+                        });
+                        return None;
+                    };
+
+                    self.defined_structs.insert(name.0.clone(), variant.clone());
+                }
             }
             Stmt::Import { .. } => todo!("internal imports not implemented yet"),
         }
@@ -670,7 +694,7 @@ impl TypeChecker {
                 let expr_ty = self.check_expr(expr)?;
                 // TODO: Handle non-enum pattern matching
                 let Type::Named(name) = expr_ty else {
-                    self.errors.push(TypeError::NotEnum(expr_ty, expr.1.clone()));
+                    self.errors.push(TypeError::NotEnum(expr_ty.to_string(), expr.1.clone()));
                     return None;
                 };
 

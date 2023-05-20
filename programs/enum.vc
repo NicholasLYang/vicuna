@@ -10,4 +10,7 @@ enum Dessert {
 
 fn main() {
   let dessert = Dessert::IceCream { flavor: "chocolate" };
+
+  use Dessert::*;
+  let dessert = IceCream { flavor: "chocolate" };
 }

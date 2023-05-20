@@ -7,10 +7,6 @@ expression: checker.check(&program)
     - start: 65
       end: 67
 - UndefinedVariable:
-    - b
-    - start: 76
-      end: 78
-- UndefinedVariable:
     - c
     - start: 88
       end: 90

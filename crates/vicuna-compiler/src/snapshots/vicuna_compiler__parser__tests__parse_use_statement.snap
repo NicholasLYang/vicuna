@@ -1,0 +1,17 @@
+---
+source: crates/vicuna-compiler/src/parser.rs
+expression: "statement().parse(\"use Foo::Bar;\")"
+---
+Ok:
+  - Use:
+      module:
+        - Foo
+        - start: 3
+          end: 7
+      name:
+        - Bar
+        - start: 9
+          end: 12
+  - start: 0
+    end: 13
+

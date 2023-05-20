@@ -156,6 +156,7 @@ impl<T: Write> JsBackend<T> {
             }
             // TODO: Add TypeScript type generation
             Stmt::Type(_) => {}
+            Stmt::Use { .. } => {}
             Stmt::Import { .. } => todo!("internal imports not implemented yet"),
         }
         Ok(())
@@ -223,8 +224,12 @@ impl<T: Write> JsBackend<T> {
                 self.output.write_all(&[op_str])?;
                 self.emit_expr(rhs)?;
             }
-            Expr::Struct(_, fields) => {
+            Expr::Struct(name, fields) => {
                 self.output.write_all(b"{")?;
+
+                self.output.write_all(b" \"__type__\": \"")?;
+                self.output.write_all(name.0.as_bytes())?;
+                self.output.write_all(b"\", ")?;
                 for (i, (name, value)) in fields.iter().enumerate() {
                     self.output.write_all(name.0.as_bytes())?;
                     self.output.write_all(b": ")?;

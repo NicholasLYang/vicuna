@@ -51,6 +51,12 @@ pub enum Stmt {
         path: Span<String>,
     },
     Type(TypeDeclaration),
+    // The equivalent of OCaml's open, basically put a variant in scope. I'll probably end
+    // up consolidating this with `import` at some point.
+    Use {
+        module: Span<String>,
+        name: Span<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
