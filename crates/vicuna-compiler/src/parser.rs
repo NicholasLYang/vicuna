@@ -281,10 +281,27 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
                 .collect::<Vec<_>>()
         });
 
+    let type_parameters = ident
+        .clone()
+        .separated_by(just(','))
+        .allow_trailing()
+        .delimited_by(just('<'), just('>'))
+        .map_with_span(Span)
+        .map(Some)
+        .or(empty().to(None))
+        .padded();
+
     let struct_declaration = text::keyword("struct")
         .ignore_then(ident)
+        .then(type_parameters.clone())
         .then(named_fields.clone().or(tuple_fields.clone()))
-        .map(|(name, fields)| TypeDeclaration::Struct { name, fields });
+        .map(
+            |((name, type_parameters), fields)| TypeDeclaration::Struct {
+                name,
+                type_parameters,
+                fields,
+            },
+        );
 
     let enum_variant = ident
         .then(named_fields.or(tuple_fields).or(empty().to(Vec::new())))
@@ -292,16 +309,20 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
 
     let enum_declaration = text::keyword("enum")
         .ignore_then(ident)
+        .then(type_parameters)
         .then(
             enum_variant
                 .separated_by(just(','))
                 .allow_trailing()
                 .delimited_by(just('{'), just('}')),
         )
-        .map(|(name, variants)| TypeDeclaration::Enum {
-            name,
-            variants: variants.into_iter().collect(),
-        });
+        .map(
+            |((name, type_parameters), variants)| TypeDeclaration::Enum {
+                name,
+                type_parameters,
+                variants: variants.into_iter().collect(),
+            },
+        );
 
     enum_declaration.or(struct_declaration)
 }

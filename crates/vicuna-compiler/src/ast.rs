@@ -13,14 +13,18 @@ pub struct Span<T: Debug + Clone + PartialEq + Serialize>(pub T, pub Range<usize
 
 impl<T: Debug + Clone + PartialEq + Serialize + Hash> Eq for Span<T> {}
 
+type TypeParams = Span<Vec<Span<String>>>;
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum TypeDeclaration {
     Struct {
         name: Span<String>,
+        type_parameters: Option<TypeParams>,
         fields: Vec<(Span<String>, Span<TypeSig>)>,
     },
     Enum {
         name: Span<String>,
+        type_parameters: Option<TypeParams>,
         variants: Vec<(Span<String>, Vec<(Span<String>, Span<TypeSig>)>)>,
     },
 }

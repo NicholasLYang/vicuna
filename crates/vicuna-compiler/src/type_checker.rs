@@ -16,7 +16,7 @@ use crate::ast::{
 };
 use miette::Diagnostic;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::mem;
 use std::ops::Range;
@@ -33,6 +33,8 @@ pub enum Type {
     Bool,
     Void,
     String,
+    // Generic types
+    Variable(Name),
     // A type for JS values
     Js,
     Array(Box<Type>),
@@ -73,6 +75,7 @@ impl Debug for Type {
             Type::Void => write!(f, "void"),
             Type::String => write!(f, "string"),
             Type::Js => write!(f, "<js value>"),
+            Type::Variable(name) => write!(f, "{}", name),
             Type::Array(ty) => write!(f, "{}[]", ty),
             Type::Function {
                 param_types,
@@ -274,34 +277,77 @@ impl TypeChecker {
         self.errors
     }
 
-    fn add_type_declaration(&mut self, type_declaration: &TypeDeclaration) {
-        match type_declaration {
-            TypeDeclaration::Struct { name, fields } => {
-                let fields: HashMap<_, _> = fields
-                    .iter()
-                    .map(|(name, ty)| (name.0.clone(), ty.into()))
-                    .collect();
+    fn check_type_sig(
+        &mut self,
+        type_parameters: Option<&HashSet<String>>,
+        type_sig: &Span<TypeSig>,
+    ) -> Option<Type> {
+        match &type_sig.0 {
+            TypeSig::Named(name) => {
+                if let Some(type_parameters) = type_parameters {
+                    if type_parameters.contains(name) {
+                        return Some(Type::Variable(name.clone()));
+                    }
+                }
 
-                self.defined_structs.insert(name.0.clone(), fields);
+                if self.defined_structs.lookup(name).is_some() {
+                    return Some(Type::Named(name.clone()));
+                }
+
+                self.errors
+                    .push(TypeError::UndefinedType(name.clone(), type_sig.1.clone()));
+
+                None
             }
-            TypeDeclaration::Enum { name, variants } => {
-                self.defined_enums.insert(
-                    name.0.clone(),
-                    variants
-                        .iter()
-                        .map(|(name, fields)| {
-                            (
-                                name.0.clone(),
-                                fields
-                                    .iter()
-                                    .map(|(name, ty)| (name.0.clone(), ty.into()))
-                                    .collect(),
-                            )
-                        })
-                        .collect(),
-                );
+            type_sig => Some(type_sig.into()),
+        }
+    }
+
+    fn add_type_declaration(&mut self, type_declaration: &TypeDeclaration) -> Option<()> {
+        match type_declaration {
+            TypeDeclaration::Struct {
+                name,
+                type_parameters,
+                fields,
+            } => {
+                let mut fields_with_types = HashMap::new();
+                let type_parameters = type_parameters
+                    .as_ref()
+                    .map(|params| params.0.iter().map(|param| param.0.clone()).collect());
+
+                for (name, type_sig) in fields {
+                    let ty = self.check_type_sig(type_parameters.as_ref(), type_sig)?;
+                    fields_with_types.insert(name.0.clone(), ty);
+                }
+
+                self.defined_structs
+                    .insert(name.0.clone(), fields_with_types);
+            }
+            TypeDeclaration::Enum {
+                name,
+                type_parameters,
+                variants,
+            } => {
+                let type_parameters = type_parameters
+                    .as_ref()
+                    .map(|params| params.0.iter().map(|param| param.0.clone()).collect());
+
+                let mut variants_map = HashMap::new();
+                for (variant_name, fields) in variants {
+                    let mut fields_with_types = HashMap::new();
+                    for (field_name, type_sig) in fields {
+                        let ty = self.check_type_sig(type_parameters.as_ref(), type_sig)?;
+                        fields_with_types.insert(field_name.0.clone(), ty);
+                    }
+
+                    variants_map.insert(variant_name.0.clone(), fields_with_types);
+                }
+
+                self.defined_enums.insert(name.0.clone(), variants_map);
             }
         }
+
+        Some(())
     }
 
     fn check_block(&mut self, stmts: &[Span<Stmt>]) {
