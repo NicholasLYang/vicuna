@@ -144,9 +144,15 @@ impl<T> SymbolTable<T> {
     }
 }
 
+struct StructInfo {
+    fields: HashMap<Name, Type>,
+    // Generic parameters used in struct
+    type_parameters: Vec<Name>,
+}
+
 pub struct TypeChecker {
     symbol_table: SymbolTable<Type>,
-    defined_structs: SymbolTable<HashMap<Name, Type>>,
+    defined_structs: SymbolTable<StructInfo>,
     defined_enums: SymbolTable<HashMap<Name, HashMap<Name, Type>>>,
     return_type: Option<Type>,
     pub(crate) errors: Vec<TypeError>,
