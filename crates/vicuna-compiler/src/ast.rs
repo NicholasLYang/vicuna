@@ -16,16 +16,23 @@ impl<T: Debug + Clone + PartialEq + Serialize + Hash> Eq for Span<T> {}
 type TypeParams = Span<Vec<Span<String>>>;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum TypeFields {
+    Named(Vec<(Span<String>, Span<TypeSig>)>),
+    Tuple(Vec<Span<TypeSig>>),
+    Empty,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum TypeDeclaration {
     Struct {
         name: Span<String>,
         type_parameters: Option<TypeParams>,
-        fields: Vec<(Span<String>, Span<TypeSig>)>,
+        fields: TypeFields,
     },
     Enum {
         name: Span<String>,
         type_parameters: Option<TypeParams>,
-        variants: Vec<(Span<String>, Vec<(Span<String>, Span<TypeSig>)>)>,
+        variants: Vec<(Span<String>, TypeFields)>,
     },
 }
 

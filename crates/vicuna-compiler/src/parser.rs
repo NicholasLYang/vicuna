@@ -1,6 +1,6 @@
 use crate::ast::{
     BinaryOp, Expr, ExprBlock, Function, ImportType, MatchBindings, MatchCase, PostFix, Program,
-    Span, Stmt, TypeDeclaration, TypeSig, UnaryOp, Value,
+    Span, Stmt, TypeDeclaration, TypeFields, TypeSig, UnaryOp, Value,
 };
 use chumsky::prelude::*;
 use miette::Diagnostic;
@@ -264,22 +264,16 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
         .allow_trailing()
         .padded()
         .delimited_by(just('{'), just('}'))
-        .map(|fields| fields.into_iter().collect::<Vec<_>>());
+        .map(|fields| TypeFields::Named(fields.into_iter().collect()));
 
     let tuple_fields = type_signature()
         .separated_by(just(','))
         .allow_trailing()
         .padded()
         .delimited_by(just('('), just(')'))
-        .map(|fields| {
-            fields
-                .into_iter()
-                .enumerate()
-                // We give the index the same span as the field since
-                // any relevant error will be with the field
-                .map(|(idx, field)| (Span(idx.to_string(), field.1.clone()), field))
-                .collect::<Vec<_>>()
-        });
+        .map(TypeFields::Tuple);
+
+    let empty_fields = empty().to(TypeFields::Empty);
 
     let type_parameters = ident
         .clone()
@@ -294,7 +288,12 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
     let struct_declaration = text::keyword("struct")
         .ignore_then(ident)
         .then(type_parameters.clone())
-        .then(named_fields.clone().or(tuple_fields.clone()))
+        .then(
+            named_fields
+                .clone()
+                .or(tuple_fields.clone())
+                .or(empty_fields.clone()),
+        )
         .map(
             |((name, type_parameters), fields)| TypeDeclaration::Struct {
                 name,
@@ -304,7 +303,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
         );
 
     let enum_variant = ident
-        .then(named_fields.or(tuple_fields).or(empty().to(Vec::new())))
+        .then(named_fields.or(tuple_fields).or(empty_fields))
         .padded();
 
     let enum_declaration = text::keyword("enum")

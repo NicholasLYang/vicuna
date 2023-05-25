@@ -1,6 +1,6 @@
 use crate::ast::{
     BinaryOp, Expr, ExprBlock, Function, ImportType, MatchBindings, PostFix, Program, Span, Stmt,
-    UnaryOp, Value,
+    TypeDeclaration, TypeFields, UnaryOp, Value,
 };
 use anyhow::Result;
 use std::io::Write;
@@ -153,6 +153,42 @@ impl<T: Write> JsBackend<T> {
                 self.output.write_all(b" from \"")?;
                 self.output.write_all(path.0.as_bytes())?;
                 self.output.write_all(b"\";\n")?;
+            }
+            Stmt::Type(TypeDeclaration::Enum {
+                name,
+                type_parameters,
+                variants,
+            }) => {
+                for (variant_name, variant_fields) in variants {
+                    if let TypeFields::Tuple(fields) = variant_fields {
+                        self.output.write_all(b"function ")?;
+                        self.output.write_all(variant_name.0.as_bytes())?;
+                        self.output.write_all(b"(")?;
+                        for (idx, field) in fields.iter().enumerate() {
+                            self.output.write_all(b"a")?;
+                            self.output.write_all(idx.to_string().as_bytes())?;
+                            if idx != fields.len() - 1 {
+                                self.output.write_all(b", ")?;
+                            }
+                        }
+                        self.output.write_all(b") {\n")?;
+                        self.output.write_all(b"const out = [];\n")?;
+                        for idx in 0..(fields.len()) {
+                            self.output.write_all(b"out[")?;
+                            self.output.write_all(idx.to_string().as_bytes())?;
+                            self.output.write_all(b"] = ")?;
+                            self.output.write_all(b"a")?;
+                            self.output.write_all(idx.to_string().as_bytes())?;
+                            self.output.write_all(b";\n")?;
+                        }
+                        self.output.write_all(b"out.type = \"")?;
+                        self.output.write_all(variant_name.0.as_bytes())?;
+                        self.output.write_all(b"\";\n")?;
+
+                        self.output.write_all(b"return out;\n")?;
+                        self.output.write_all(b"}\n")?;
+                    }
+                }
             }
             // TODO: Add TypeScript type generation
             Stmt::Type(_) => {}
