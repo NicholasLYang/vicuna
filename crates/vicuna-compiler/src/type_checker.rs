@@ -11,8 +11,8 @@
 //!  - Borrow checking
 //!
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, Function, ImportType, MatchBindings, PostFix, Program, Span, Stmt,
-    TypeDeclaration, TypeFields, TypeSig, UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, ExprFields, Fields, Function, ImportType, MatchBindings, PostFix,
+    Program, Span, Stmt, TypeDeclaration, TypeFields, TypeSig, UnaryOp, Value,
 };
 use miette::Diagnostic;
 use serde::Serialize;
@@ -85,6 +85,40 @@ impl Display for Type {
     }
 }
 
+impl Display for FieldsSchema {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl Debug for FieldsSchema {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FieldsSchema::Named(fields) => {
+                write!(f, "{{ ")?;
+                for (i, (name, ty)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", name, ty)?;
+                }
+                write!(f, " }}")
+            }
+            FieldsSchema::Tuple(fields) => {
+                write!(f, "(")?;
+                for (i, ty) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", ty)?;
+                }
+                write!(f, ")")
+            }
+            FieldsSchema::Empty => Ok(()),
+        }
+    }
+}
+
 impl Debug for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -123,12 +157,7 @@ impl Debug for Type {
                 write!(f, ">")?;
 
                 write!(f, " {{ ")?;
-                for (i, (field_name, field_type)) in schema.fields.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}: {}", field_name, field_type)?;
-                }
+                write!(f, "{}", schema.fields)?;
                 write!(f, " }}")
             }
             Type::Enum {
@@ -145,7 +174,7 @@ impl Debug for Type {
                 write!(f, ">")?;
 
                 write!(f, " {{ ")?;
-                for (i, (variant_name, variant)) in schema.variants.iter().enumerate() {
+                for (i, (variant_name, _variant)) in schema.variants.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
@@ -195,6 +224,7 @@ impl<T> SymbolTable<T> {
         None
     }
 
+    #[allow(dead_code)]
     fn lookup_mut(&mut self, name: &Name) -> Option<&mut T> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(ty) = scope.get_mut(name) {
@@ -206,10 +236,35 @@ impl<T> SymbolTable<T> {
     }
 }
 
+#[derive(Clone, PartialEq, Serialize)]
+pub enum FieldsSchema {
+    Tuple(Vec<Type>),
+    Named(HashMap<Name, Type>),
+    Empty,
+}
+
+impl FieldsSchema {
+    fn is_empty(&self) -> bool {
+        match self {
+            FieldsSchema::Empty => true,
+            FieldsSchema::Tuple(fields) => fields.is_empty(),
+            FieldsSchema::Named(fields) => fields.is_empty(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            FieldsSchema::Empty => 0,
+            FieldsSchema::Tuple(fields) => fields.len(),
+            FieldsSchema::Named(fields) => fields.len(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Serialize)]
 pub struct StructSchema {
     name: Name,
-    fields: HashMap<Name, Type>,
+    fields: FieldsSchema,
     // Generic parameters used in struct
     type_parameters: Vec<Name>,
 }
@@ -242,8 +297,8 @@ pub enum TypeError {
     #[error("Got different struct fields than defined: expected {expected_fields:?}, got {received_fields:?}")]
     #[diagnostic(code(type_error::struct_fields_mismatch))]
     FieldsMismatch {
-        expected_fields: HashMap<Name, Type>,
-        received_fields: HashMap<Name, InferredType>,
+        expected_fields: FieldsSchema,
+        received_fields: Fields<InferredType>,
         #[label]
         span: Range<usize>,
     },
@@ -288,6 +343,13 @@ pub enum TypeError {
     #[error("Type parameter {name} is not used anywhere")]
     UnusedTypeParameter {
         name: Name,
+        #[label]
+        span: Range<usize>,
+    },
+    #[error("Trying to use a {pattern} pattern to match against {ty}")]
+    WrongPattern {
+        pattern: &'static str,
+        ty: &'static str,
         #[label]
         span: Range<usize>,
     },
@@ -358,27 +420,28 @@ impl TypeChecker {
         &mut self,
         type_parameters: Option<&HashSet<String>>,
         fields: &TypeFields,
-    ) -> Option<HashMap<String, Type>> {
-        let mut fields_with_types = HashMap::new();
-
+    ) -> Option<FieldsSchema> {
         match fields {
             TypeFields::Named(fields) => {
+                let mut fields_with_types = HashMap::new();
                 for (name, type_sig) in fields {
                     let ty = self.check_type_sig(type_parameters, type_sig)?;
                     fields_with_types.insert(name.0.clone(), ty);
                 }
+
+                Some(FieldsSchema::Named(fields_with_types))
             }
             TypeFields::Tuple(fields) => {
-                // TODO: Consider using an enum here instead of a HashMap
-                for (i, type_sig) in fields.iter().enumerate() {
+                let mut types = Vec::new();
+                for type_sig in fields {
                     let ty = self.check_type_sig(type_parameters, type_sig)?;
-                    fields_with_types.insert(i.to_string(), ty);
+                    types.push(ty);
                 }
-            }
-            TypeFields::Empty => {}
-        }
 
-        Some(fields_with_types)
+                Some(FieldsSchema::Tuple(types))
+            }
+            TypeFields::Empty => Some(FieldsSchema::Empty),
+        }
     }
 
     fn add_type_declaration(&mut self, type_declaration: &TypeDeclaration) -> Option<()> {
@@ -392,12 +455,11 @@ impl TypeChecker {
                     .as_ref()
                     .map(|params| params.0.iter().map(|param| param.0.clone()).collect());
 
-                let fields_with_types =
-                    self.add_type_fields(type_parameters_set.as_ref(), fields)?;
+                let fields = self.add_type_fields(type_parameters_set.as_ref(), fields)?;
 
                 let schema = StructSchema {
                     name: name.0.clone(),
-                    fields: fields_with_types,
+                    fields,
                     type_parameters: type_parameters
                         .as_ref()
                         .map(|params| params.0.iter().map(|param| param.0.clone()).collect())
@@ -417,14 +479,13 @@ impl TypeChecker {
 
                 let mut variants_map = HashMap::new();
                 for (variant_name, fields) in variants {
-                    let fields_with_types =
-                        self.add_type_fields(type_parameters_set.as_ref(), fields)?;
+                    let fields = self.add_type_fields(type_parameters_set.as_ref(), fields)?;
 
                     variants_map.insert(
                         variant_name.0.clone(),
                         Arc::new(StructSchema {
                             name: variant_name.0.clone(),
-                            fields: fields_with_types,
+                            fields,
                             type_parameters: type_parameters
                                 .as_ref()
                                 .map(|params| {
@@ -717,6 +778,27 @@ impl TypeChecker {
             }
             Expr::PostFix(callee, Span(PostFix::Args(args), args_span)) => {
                 if let Expr::Variable(name) = &callee.0 {
+                    if let Some(schema) = self.struct_schemas.lookup(name).cloned() {
+                        if let FieldsSchema::Tuple(schema_fields) = &schema.fields {
+                            let mut instantiated_variables = HashMap::new();
+                            self.compare_tuple_fields(
+                                &mut instantiated_variables,
+                                args,
+                                schema_fields,
+                                args_span.clone(),
+                            )?;
+                            let type_arguments = self.get_type_arguments(
+                                &instantiated_variables,
+                                &schema,
+                                expr.1.clone(),
+                            )?;
+
+                            return Some(Type::Struct {
+                                schema: schema.clone(),
+                                type_arguments,
+                            });
+                        }
+                    }
                     if name == "print" {
                         for arg in args {
                             self.check_expr(arg)?;
@@ -760,36 +842,48 @@ impl TypeChecker {
             Expr::PostFix(callee, Span(PostFix::Field(field), field_span)) => {
                 let callee_ty = self.check_expr(callee)?;
                 debug!("callee type: {:?}", callee);
-                if let Type::Struct {
+                let Type::Struct {
                     schema,
                     type_arguments,
-                } = callee_ty
-                {
-                    match schema.fields.get(&field.0) {
-                        Some(Type::Variable(var_name)) => {
-                            let idx = schema
-                                .type_parameters
-                                .iter()
-                                .position(|name| name == var_name)
-                                .expect("type var should be in type parameters");
-
-                            Some(type_arguments[idx].clone())
-                        }
-                        Some(ty) => Some(ty.clone()),
-                        None => {
-                            self.errors.push(TypeError::UndefinedField {
-                                struct_name: schema.name.clone(),
-                                field_name: field.0.clone(),
-                                span: field_span.clone(),
-                            });
-
-                            None
-                        }
-                    }
-                } else {
+                } = callee_ty else {
                     self.errors
                         .push(TypeError::NotStruct(callee_ty, callee.1.clone()));
-                    None
+                    return None;
+                };
+                let field_type = match &schema.fields {
+                    FieldsSchema::Tuple(_) => {
+                        // Unclear what I should do here. I could allow for number fields,
+                        // like in Rust, e.g. `foo.1`, `bar.0.2`, but that leads to parsing
+                        // ambiguity in the case of `foo.1.2` where you have to explicitly
+                        // not parse it as `foo.(1.2)` but as `(foo.1).2`.
+                        // I could also use indexing like `foo[0]`. That might be preferable
+                        // and honestly better looking IMO.
+                        todo!()
+                    }
+                    FieldsSchema::Named(fields) => fields.get(&field.0),
+                    FieldsSchema::Empty => None,
+                };
+
+                match field_type {
+                    Some(Type::Variable(var_name)) => {
+                        let idx = schema
+                            .type_parameters
+                            .iter()
+                            .position(|name| name == var_name)
+                            .expect("type var should be in type parameters");
+
+                        Some(type_arguments[idx].clone())
+                    }
+                    Some(ty) => Some(ty.clone()),
+                    None => {
+                        self.errors.push(TypeError::UndefinedField {
+                            struct_name: schema.name.clone(),
+                            field_name: field.0.clone(),
+                            span: field_span.clone(),
+                        });
+
+                        None
+                    }
                 }
             }
             Expr::PostFix(callee, Span(PostFix::Index(index), _)) => {
@@ -882,7 +976,7 @@ impl TypeChecker {
             Expr::Match { expr, cases } => {
                 let expr_ty = self.check_expr(expr)?;
                 // TODO: Handle non-enum pattern matching
-                let Type::Enum { schema, type_arguments } = expr_ty else {
+                let Type::Enum { schema, .. } = expr_ty else {
                     self.errors.push(TypeError::NotEnum(expr_ty.to_string(), expr.1.clone()));
                     return None;
                 };
@@ -905,7 +999,7 @@ impl TypeChecker {
                         if !variant_schema.fields.is_empty() {
                             self.errors.push(TypeError::FieldsMismatch {
                                 expected_fields: variant_schema.fields.clone(),
-                                received_fields: HashMap::new(),
+                                received_fields: Fields::Empty,
                                 span: case.0.variant_name.1.clone(),
                             });
                         }
@@ -915,14 +1009,20 @@ impl TypeChecker {
                     // TODO: Handle rest expressions
                     if variant_schema.fields.len() != received_fields.len() {
                         let received_fields = match received_fields {
-                            MatchBindings::Tuple(fields) => fields
-                                .into_iter()
-                                .map(|field| (field.0.clone(), InferredType::Unknown))
-                                .collect(),
-                            MatchBindings::Named(fields) => fields
-                                .into_iter()
-                                .map(|(name, _)| (name.0.clone(), InferredType::Unknown))
-                                .collect(),
+                            MatchBindings::Tuple(fields) => Fields::Tuple(
+                                fields
+                                    .into_iter()
+                                    .map(|field| Span(InferredType::Unknown, field.1.clone()))
+                                    .collect(),
+                            ),
+                            MatchBindings::Named(fields) => Fields::Named(
+                                fields
+                                    .into_iter()
+                                    .map(|(name, _)| {
+                                        (name.clone(), Span(InferredType::Unknown, name.1.clone()))
+                                    })
+                                    .collect(),
+                            ),
                         };
 
                         self.errors.push(TypeError::FieldsMismatch {
@@ -936,10 +1036,23 @@ impl TypeChecker {
 
                     match received_fields {
                         MatchBindings::Tuple(fields) => {
+                            let FieldsSchema::Tuple(expected_fields) = &variant_schema.fields else {
+                                let ty = if matches!(variant_schema.fields, FieldsSchema::Named(_)) {
+                                    "named"
+                                } else {
+                                    "empty"
+                                };
+
+                                self.errors.push(TypeError::WrongPattern {
+                                    pattern: "tuple",
+                                    ty,
+                                    span: Default::default(),
+                                });
+                                return None;
+                            };
+
                             for (idx, field) in fields.into_iter().enumerate() {
-                                if let Some(expected_field_ty) =
-                                    variant_schema.fields.get(&idx.to_string())
-                                {
+                                if let Some(expected_field_ty) = expected_fields.get(idx) {
                                     self.symbol_table
                                         .insert(field.0.clone(), expected_field_ty.clone());
                                 } else {
@@ -955,9 +1068,23 @@ impl TypeChecker {
                             }
                         }
                         MatchBindings::Named(fields) => {
+                            let FieldsSchema::Named(expected_fields) = &variant_schema.fields else {
+                                let ty = if matches!(variant_schema.fields, FieldsSchema::Tuple(_)) {
+                                    "tuple"
+                                } else {
+                                    "empty"
+                                };
+
+                                self.errors.push(TypeError::WrongPattern {
+                                    pattern: "named",
+                                    ty,
+                                    span: Default::default(),
+                                });
+                                return None;
+                            };
+
                             for (field, rename) in fields {
-                                if let Some(expected_field_ty) = variant_schema.fields.get(&field.0)
-                                {
+                                if let Some(expected_field_ty) = expected_fields.get(&field.0) {
                                     let name = rename.as_ref().unwrap_or(&field).0.clone();
                                     self.symbol_table.insert(name, expected_field_ty.clone());
                                 } else {
@@ -1007,27 +1134,99 @@ impl TypeChecker {
     }
 
     // Gets types from the fields of a struct literal. Used to produce an error
-    fn get_field_types(
+    fn get_field_types(&mut self, fields: &ExprFields) -> Fields<InferredType> {
+        fields.map(|expr| match self.check_expr(expr) {
+            Some(ty) => Span(InferredType::Known(ty), expr.1.clone()),
+            None => Span(InferredType::Unknown, expr.1.clone()),
+        })
+    }
+
+    fn instantiate_variable(
         &mut self,
-        fields: &Vec<(Span<String>, Span<Expr>)>,
-    ) -> HashMap<String, InferredType> {
-        let mut field_types = HashMap::new();
-        for (field_name, field_value) in fields {
-            let field_ty = match self.check_expr(field_value) {
-                Some(ty) => InferredType::Known(ty),
-                None => InferredType::Unknown,
-            };
-            field_types.insert(field_name.0.clone(), field_ty);
+        var_name: &str,
+        expr_ty: Type,
+        expr_span: Range<usize>,
+        instantiated_variables: &mut HashMap<Name, Type>,
+    ) {
+        if let Some(instantiated_ty) = instantiated_variables.get(var_name) {
+            if &expr_ty != instantiated_ty {
+                self.errors.push(TypeError::TypeMismatch {
+                    expected_ty: instantiated_ty.clone(),
+                    received_ty: expr_ty.clone(),
+                    span: expr_span,
+                });
+            }
+        } else {
+            instantiated_variables.insert(var_name.to_string(), expr_ty);
+        }
+    }
+
+    fn compare_tuple_fields(
+        &mut self,
+        instantiated_variables: &mut HashMap<Name, Type>,
+        tuple_entries: &[Span<Expr>],
+        schema_fields: &[Type],
+        struct_span: Range<usize>,
+    ) -> Option<()> {
+        for (i, entry) in tuple_entries.iter().enumerate() {
+            let expr_ty = self.check_expr(entry)?;
+            match schema_fields.get(i) {
+                Some(Type::Variable(name)) => {
+                    self.instantiate_variable(
+                        &name,
+                        expr_ty,
+                        entry.1.clone(),
+                        instantiated_variables,
+                    );
+                }
+                Some(expected_ty) => {
+                    if &expr_ty != expected_ty {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected_ty: expected_ty.clone(),
+                            received_ty: expr_ty.clone(),
+                            span: entry.1.clone(),
+                        });
+                    }
+                }
+                None => {
+                    self.errors.push(TypeError::ArityMismatch(
+                        schema_fields.len(),
+                        tuple_entries.len(),
+                        struct_span.clone(),
+                    ));
+                }
+            }
         }
 
-        field_types
+        Some(())
+    }
+
+    fn get_type_arguments(
+        &mut self,
+        instantiated_variables: &HashMap<Name, Type>,
+        schema: &StructSchema,
+        struct_span: Range<usize>,
+    ) -> Option<Vec<Type>> {
+        let mut type_arguments = vec![];
+        for type_param in &schema.type_parameters {
+            let Some(type_arg) = instantiated_variables.get(type_param) else {
+                self.errors.push(TypeError::UnusedTypeParameter {
+                    name: type_param.clone(),
+                    span: struct_span,
+                });
+                return None
+            };
+            type_arguments.push(type_arg.clone());
+        }
+
+        Some(type_arguments)
     }
 
     fn compare_fields(
         &mut self,
         struct_name: &str,
         struct_span: Range<usize>,
-        literal_fields: &Vec<(Span<String>, Span<Expr>)>,
+        literal_fields: &ExprFields,
         struct_schema: &StructSchema,
     ) -> Option<Vec<Type>> {
         if literal_fields.len() != struct_schema.fields.len() {
@@ -1046,53 +1245,60 @@ impl TypeChecker {
         // we don't have conflicting instantiations.
         let mut instantiated_variables = HashMap::new();
 
-        for (field_name, field_value) in literal_fields {
-            let expr_ty = self.check_expr(field_value)?;
-            match struct_schema.fields.get(&field_name.0) {
-                Some(Type::Variable(name)) => {
-                    if let Some(instantiated_ty) = instantiated_variables.get(name) {
-                        if &expr_ty != instantiated_ty {
-                            self.errors.push(TypeError::TypeMismatch {
-                                expected_ty: instantiated_ty.clone(),
-                                received_ty: expr_ty.clone(),
-                                span: field_value.1.clone(),
+        match (literal_fields, &struct_schema.fields) {
+            (Fields::Named(literal_fields), FieldsSchema::Named(schema_fields)) => {
+                for (field_name, field_value) in literal_fields {
+                    let expr_ty = self.check_expr(field_value)?;
+                    match schema_fields.get(&field_name.0) {
+                        Some(Type::Variable(name)) => {
+                            self.instantiate_variable(
+                                name,
+                                expr_ty,
+                                field_value.1.clone(),
+                                &mut instantiated_variables,
+                            );
+                        }
+                        Some(expected_ty) => {
+                            if &expr_ty != expected_ty {
+                                self.errors.push(TypeError::TypeMismatch {
+                                    expected_ty: expected_ty.clone(),
+                                    received_ty: expr_ty.clone(),
+                                    span: field_value.1.clone(),
+                                });
+                            }
+                        }
+                        None => {
+                            self.errors.push(TypeError::MissingField {
+                                struct_name: struct_name.to_string(),
+                                field_name: field_name.0.clone(),
+                                span: field_name.1.clone(),
                             });
                         }
-                    } else {
-                        instantiated_variables.insert(name.clone(), expr_ty);
                     }
                 }
-                Some(expected_ty) => {
-                    if &expr_ty != expected_ty {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected_ty: expected_ty.clone(),
-                            received_ty: expr_ty.clone(),
-                            span: field_value.1.clone(),
-                        });
-                    }
-                }
-                None => {
-                    self.errors.push(TypeError::MissingField {
-                        struct_name: struct_name.to_string(),
-                        field_name: field_name.0.clone(),
-                        span: field_name.1.clone(),
-                    });
-                }
+            }
+            (Fields::Tuple(entries), FieldsSchema::Tuple(schema_fields)) => {
+                self.compare_tuple_fields(
+                    &mut instantiated_variables,
+                    entries,
+                    schema_fields,
+                    struct_span.clone(),
+                )?;
+            }
+            (Fields::Empty, FieldsSchema::Empty) => {}
+            _ => {
+                let received_fields = self.get_field_types(literal_fields);
+                self.errors.push(TypeError::FieldsMismatch {
+                    expected_fields: struct_schema.fields.clone(),
+                    received_fields,
+                    span: struct_span,
+                });
+                return None;
             }
         }
 
-        let mut type_arguments = vec![];
-        for type_param in &struct_schema.type_parameters {
-            let Some(type_arg) = instantiated_variables.get(type_param) else {
-                self.errors.push(TypeError::UnusedTypeParameter {
-                    name: type_param.clone(),
-                    span: struct_span.clone(),
-                });
-                return None
-            };
-            type_arguments.push(type_arg.clone());
-        }
-
+        let type_arguments =
+            self.get_type_arguments(&instantiated_variables, struct_schema, struct_span)?;
         Some(type_arguments)
     }
 }

@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, Function, ImportType, MatchBindings, PostFix, Program, Span, Stmt,
-    TypeDeclaration, TypeFields, UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, ExprFields, Function, ImportType, MatchBindings, PostFix, Program,
+    Span, Stmt, TypeDeclaration, TypeFields, UnaryOp, Value,
 };
 use anyhow::Result;
 use std::io::Write;
@@ -154,17 +154,13 @@ impl<T: Write> JsBackend<T> {
                 self.output.write_all(path.0.as_bytes())?;
                 self.output.write_all(b"\";\n")?;
             }
-            Stmt::Type(TypeDeclaration::Enum {
-                name,
-                type_parameters,
-                variants,
-            }) => {
+            Stmt::Type(TypeDeclaration::Enum { variants, .. }) => {
                 for (variant_name, variant_fields) in variants {
                     if let TypeFields::Tuple(fields) = variant_fields {
                         self.output.write_all(b"function ")?;
                         self.output.write_all(variant_name.0.as_bytes())?;
                         self.output.write_all(b"(")?;
-                        for (idx, field) in fields.iter().enumerate() {
+                        for (idx, _) in fields.iter().enumerate() {
                             self.output.write_all(b"a")?;
                             self.output.write_all(idx.to_string().as_bytes())?;
                             if idx != fields.len() - 1 {
@@ -266,14 +262,7 @@ impl<T: Write> JsBackend<T> {
                 self.output.write_all(b" \"__type__\": \"")?;
                 self.output.write_all(name.0.as_bytes())?;
                 self.output.write_all(b"\", ")?;
-                for (i, (name, value)) in fields.iter().enumerate() {
-                    self.output.write_all(name.0.as_bytes())?;
-                    self.output.write_all(b": ")?;
-                    self.emit_expr(value)?;
-                    if i < fields.len() - 1 {
-                        self.output.write_all(b", ")?;
-                    }
-                }
+                self.emit_expr_fields(fields)?;
                 self.output.write_all(b"}")?;
             }
             Expr::Enum {
@@ -285,14 +274,7 @@ impl<T: Write> JsBackend<T> {
                 self.output.write_all(b" \"__type__\": \"")?;
                 self.output.write_all(variant_name.0.as_bytes())?;
                 self.output.write_all(b"\", ")?;
-                for (i, (name, value)) in fields.iter().enumerate() {
-                    self.output.write_all(name.0.as_bytes())?;
-                    self.output.write_all(b": ")?;
-                    self.emit_expr(value)?;
-                    if i < fields.len() - 1 {
-                        self.output.write_all(b", ")?;
-                    }
-                }
+                self.emit_expr_fields(fields)?;
                 self.output.write_all(b"}")?;
             }
             // We assume that the if expression is well placed, and therefore not
@@ -331,6 +313,33 @@ impl<T: Write> JsBackend<T> {
                 }
                 self.output.write_all(b"}")?;
             }
+        }
+
+        Ok(())
+    }
+
+    fn emit_expr_fields(&mut self, fields: &ExprFields) -> Result<()> {
+        match fields {
+            ExprFields::Tuple(fields) => {
+                for (i, field) in fields.into_iter().enumerate() {
+                    self.output.write_all(format!("{}: ", i).as_bytes())?;
+                    self.emit_expr(field)?;
+                    if i < fields.len() - 1 {
+                        self.output.write_all(b", ")?;
+                    }
+                }
+            }
+            ExprFields::Named(fields) => {
+                for (i, (name, field)) in fields.into_iter().enumerate() {
+                    self.output.write_all(name.0.as_bytes())?;
+                    self.output.write_all(b": ")?;
+                    self.emit_expr(field)?;
+                    if i < fields.len() - 1 {
+                        self.output.write_all(b", ")?;
+                    }
+                }
+            }
+            ExprFields::Empty => {}
         }
 
         Ok(())

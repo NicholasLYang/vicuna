@@ -2,3 +2,5 @@ enum Option<T> {
  Some(T),
  None
 }
+
+let a = Option::Some(10);

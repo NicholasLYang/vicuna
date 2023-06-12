@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, Function, ImportType, MatchBindings, MatchCase, PostFix, Program,
-    Span, Stmt, TypeDeclaration, TypeFields, TypeSig, UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, ExprFields, Function, ImportType, MatchBindings, MatchCase, PostFix,
+    Program, Span, Stmt, TypeDeclaration, TypeFields, TypeSig, UnaryOp, Value,
 };
 use chumsky::prelude::*;
 use miette::Diagnostic;
@@ -97,46 +97,36 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .then(expr.clone())
             .separated_by(just(','))
             .allow_trailing()
-            .delimited_by(just('{'), just('}'));
+            .delimited_by(just('{'), just('}'))
+            .map(|fields| ExprFields::Named(fields.into_iter().collect()));
 
         let tuple_fields = expr
             .clone()
             .separated_by(just(','))
             .allow_trailing()
             .delimited_by(just('('), just(')'))
-            .map(|fields| {
-                fields
-                    .into_iter()
-                    .enumerate()
-                    .map(|(idx, expr): (usize, Span<Expr>)| {
-                        (Span(idx.to_string(), expr.1.clone()), expr)
-                    })
-                    .collect()
-            });
+            .map(ExprFields::Tuple);
 
         let enum_literal = ident
             .map_with_span(Span)
             .then_ignore(just("::"))
             .then(ident.map_with_span(Span))
             .then(named_fields.clone().or(tuple_fields.clone()))
-            .map_with_span(|((enum_name, variant_name), v), span| {
+            .map_with_span(|((enum_name, variant_name), fields), span| {
                 Span(
                     Expr::Enum {
                         enum_name,
                         variant_name,
-                        fields: v.into_iter().collect(),
+                        fields,
                     },
                     span,
                 )
             });
 
-        let struct_literal =
-            ident
-                .map_with_span(Span)
-                .then(named_fields)
-                .map_with_span(|(name, fields), span| {
-                    Span(Expr::Struct(name, fields.into_iter().collect()), span)
-                });
+        let struct_literal = ident
+            .map_with_span(Span)
+            .then(named_fields.or(tuple_fields))
+            .map_with_span(|(name, fields), span| Span(Expr::Struct(name, fields), span));
 
         let atom = float
             .or(int)

@@ -16,11 +16,31 @@ impl<T: Debug + Clone + PartialEq + Serialize + Hash> Eq for Span<T> {}
 type TypeParams = Span<Vec<Span<String>>>;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub enum TypeFields {
-    Named(Vec<(Span<String>, Span<TypeSig>)>),
-    Tuple(Vec<Span<TypeSig>>),
+pub enum Fields<T: Debug + Clone + PartialEq + Serialize> {
+    Named(Vec<(Span<String>, Span<T>)>),
+    Tuple(Vec<Span<T>>),
     Empty,
 }
+
+impl<T: Debug + Clone + PartialEq + Serialize> Fields<T> {
+    pub fn map<U: Debug + Clone + PartialEq + Serialize>(
+        &self,
+        mut f: impl FnMut(&Span<T>) -> Span<U>,
+    ) -> Fields<U> {
+        match self {
+            Fields::Named(fields) => Fields::Named(
+                fields
+                    .iter()
+                    .map(|(name, value)| (name.clone(), f(value)))
+                    .collect(),
+            ),
+            Fields::Tuple(fields) => Fields::Tuple(fields.iter().map(|value| f(value)).collect()),
+            Fields::Empty => Fields::Empty,
+        }
+    }
+}
+
+pub type TypeFields = Fields<TypeSig>;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum TypeDeclaration {
@@ -84,6 +104,18 @@ pub struct ExprBlock {
     pub end_expr: Option<Box<Span<Expr>>>,
 }
 
+pub type ExprFields = Fields<Expr>;
+
+impl ExprFields {
+    pub fn len(&self) -> usize {
+        match self {
+            ExprFields::Tuple(fields) => fields.len(),
+            ExprFields::Named(fields) => fields.len(),
+            ExprFields::Empty => 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Expr {
     Value(Value),
@@ -94,11 +126,11 @@ pub enum Expr {
     PostFix(Box<Span<Expr>>, Span<PostFix>),
     Binary(Span<BinaryOp>, Box<Span<Expr>>, Box<Span<Expr>>),
     Unary(Span<UnaryOp>, Box<Span<Expr>>),
-    Struct(Span<String>, Vec<(Span<String>, Span<Expr>)>),
+    Struct(Span<String>, ExprFields),
     Enum {
         enum_name: Span<String>,
         variant_name: Span<String>,
-        fields: Vec<(Span<String>, Span<Expr>)>,
+        fields: ExprFields,
     },
     // If expressions are not available in all places, because they
     // don't transpile cleanly to JavaScript. Instead, they're only
