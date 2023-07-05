@@ -125,7 +125,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
 
         let struct_literal = ident
             .map_with_span(Span)
-            .then(named_fields.or(tuple_fields))
+            .then(named_fields)
             .map_with_span(|(name, fields), span| Span(Expr::Struct(name, fields), span));
 
         let atom = float
@@ -227,16 +227,22 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
 }
 
 fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Clone {
-    ident().map(|id| {
-        let sig = match id.0.as_str() {
-            "i32" => TypeSig::I32,
-            "f32" => TypeSig::F32,
-            "string" => TypeSig::String,
-            "bool" => TypeSig::Bool,
-            name => TypeSig::Named(name.to_string()),
-        };
-
-        Span(sig, id.1)
+    recursive(|type_sig| {
+        just("i32")
+            .padded()
+            .to(TypeSig::I32)
+            .or(just("f32").padded().to(TypeSig::F32))
+            .or(just("string").padded().to(TypeSig::String))
+            .or(just("bool").padded().to(TypeSig::Bool))
+            .or(ident()
+                .then(
+                    type_sig
+                        .separated_by(just(','))
+                        .delimited_by(just('<'), just('>')),
+                )
+                .map(|(name, args)| TypeSig::Named(name, args)))
+            .or(ident().map(|name| TypeSig::Named(name, vec![])))
+            .map_with_span(Span)
     })
 }
 

@@ -193,7 +193,9 @@ pub enum TypeSig {
     F32,
     String,
     Bool,
-    Named(String),
+    // This could technically be consolidated with the above one,
+    // but I want to keep a "happy path"
+    Named(Span<String>, Vec<Span<TypeSig>>),
 }
 
 impl Eq for TypeSig {}

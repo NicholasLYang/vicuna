@@ -3,4 +3,14 @@ enum Option<T> {
  None
 }
 
-let a = Option::Some(10);
+use Option::*;
+
+fn foo(a: i32) {
+  print(a);
+}
+
+let a = Some(10);
+
+let b = Option::Some(20);
+
+let c = foo(30);
