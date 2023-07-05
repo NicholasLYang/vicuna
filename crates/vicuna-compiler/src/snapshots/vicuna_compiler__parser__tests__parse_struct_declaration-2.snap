@@ -8,5 +8,7 @@ Ok:
       - Foo
       - start: 6
         end: 11
-    fields: []
+    type_parameters: ~
+    fields:
+      Named: []
 

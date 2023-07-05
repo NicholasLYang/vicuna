@@ -1,26 +1,27 @@
 ---
 source: crates/vicuna-compiler/src/parser.rs
-expression: "expr().parse(\"Foo { a: 10, b: 20 }\")"
+expression: "expression().parse(\"Foo { a: 10, b: 20 }\")"
 ---
 Ok:
   - Struct:
       - - Foo
         - start: 0
           end: 4
-      - - - - a
-            - start: 5
-              end: 7
-          - - Value:
-                I32: 10
-            - start: 9
-              end: 11
-        - - - b
-            - start: 12
-              end: 14
-          - - Value:
-                I32: 20
-            - start: 16
-              end: 18
+      - Named:
+          - - - a
+              - start: 5
+                end: 7
+            - - Value:
+                  I32: 10
+              - start: 9
+                end: 11
+          - - - b
+              - start: 12
+                end: 14
+            - - Value:
+                  I32: 20
+              - start: 16
+                end: 18
   - start: 0
     end: 20
 

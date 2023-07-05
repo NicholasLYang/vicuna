@@ -12,7 +12,7 @@ let a = Some(10);
 struct Span<T> {
   start: i32,
   end: i32,
-  inner: T
+  inner: T,
 }
 
 let s = Span {

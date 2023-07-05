@@ -8,9 +8,10 @@ Ok:
       - Foo
       - start: 4
         end: 9
+    type_parameters: ~
     variants:
       - - - A
           - start: 11
             end: 13
-        - []
+        - Empty
 

@@ -8,11 +8,13 @@ Ok:
       - Foo
       - start: 6
         end: 11
+    type_parameters: ~
     fields:
-      - - - a
-          - start: 13
-            end: 14
-        - - I32
-          - start: 15
-            end: 20
+      Named:
+        - - - a
+            - start: 13
+              end: 14
+          - - I32
+            - start: 15
+              end: 20
 
