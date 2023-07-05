@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, Function, ImportType, MatchBindings, MatchCase, PostFix, Program,
-    Span, Stmt, TypeDeclaration, TypeSig, UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, ExprFields, Function, ImportType, MatchBindings, MatchCase, PostFix,
+    Program, Span, Stmt, TypeDeclaration, TypeFields, TypeSig, UnaryOp, Value,
 };
 use chumsky::prelude::*;
 use miette::Diagnostic;
@@ -97,46 +97,36 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .then(expr.clone())
             .separated_by(just(','))
             .allow_trailing()
-            .delimited_by(just('{'), just('}'));
+            .delimited_by(just('{'), just('}'))
+            .map(|fields| ExprFields::Named(fields.into_iter().collect()));
 
         let tuple_fields = expr
             .clone()
             .separated_by(just(','))
             .allow_trailing()
             .delimited_by(just('('), just(')'))
-            .map(|fields| {
-                fields
-                    .into_iter()
-                    .enumerate()
-                    .map(|(idx, expr): (usize, Span<Expr>)| {
-                        (Span(idx.to_string(), expr.1.clone()), expr)
-                    })
-                    .collect()
-            });
+            .map(ExprFields::Tuple);
 
         let enum_literal = ident
             .map_with_span(Span)
             .then_ignore(just("::"))
             .then(ident.map_with_span(Span))
             .then(named_fields.clone().or(tuple_fields.clone()))
-            .map_with_span(|((enum_name, variant_name), v), span| {
+            .map_with_span(|((enum_name, variant_name), fields), span| {
                 Span(
                     Expr::Enum {
                         enum_name,
                         variant_name,
-                        fields: v.into_iter().collect(),
+                        fields,
                     },
                     span,
                 )
             });
 
-        let struct_literal =
-            ident
-                .map_with_span(Span)
-                .then(named_fields)
-                .map_with_span(|(name, fields), span| {
-                    Span(Expr::Struct(name, fields.into_iter().collect()), span)
-                });
+        let struct_literal = ident
+            .map_with_span(Span)
+            .then(named_fields)
+            .map_with_span(|(name, fields), span| Span(Expr::Struct(name, fields), span));
 
         let atom = float
             .or(int)
@@ -237,16 +227,22 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
 }
 
 fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Clone {
-    ident().map(|id| {
-        let sig = match id.0.as_str() {
-            "i32" => TypeSig::I32,
-            "f32" => TypeSig::F32,
-            "string" => TypeSig::String,
-            "bool" => TypeSig::Bool,
-            name => TypeSig::Named(name.to_string()),
-        };
-
-        Span(sig, id.1)
+    recursive(|type_sig| {
+        just("i32")
+            .padded()
+            .to(TypeSig::I32)
+            .or(just("f32").padded().to(TypeSig::F32))
+            .or(just("string").padded().to(TypeSig::String))
+            .or(just("bool").padded().to(TypeSig::Bool))
+            .or(ident()
+                .then(
+                    type_sig
+                        .separated_by(just(','))
+                        .delimited_by(just('<'), just('>')),
+                )
+                .map(|(name, args)| TypeSig::Named(name, args)))
+            .or(ident().map(|name| TypeSig::Named(name, vec![])))
+            .map_with_span(Span)
     })
 }
 
@@ -264,44 +260,64 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
         .allow_trailing()
         .padded()
         .delimited_by(just('{'), just('}'))
-        .map(|fields| fields.into_iter().collect::<Vec<_>>());
+        .map(|fields| TypeFields::Named(fields.into_iter().collect()));
 
     let tuple_fields = type_signature()
         .separated_by(just(','))
         .allow_trailing()
         .padded()
         .delimited_by(just('('), just(')'))
-        .map(|fields| {
-            fields
-                .into_iter()
-                .enumerate()
-                // We give the index the same span as the field since
-                // any relevant error will be with the field
-                .map(|(idx, field)| (Span(idx.to_string(), field.1.clone()), field))
-                .collect::<Vec<_>>()
-        });
+        .map(TypeFields::Tuple);
+
+    let empty_fields = empty().to(TypeFields::Empty);
+
+    let type_parameters = ident
+        .clone()
+        .separated_by(just(','))
+        .allow_trailing()
+        .delimited_by(just('<'), just('>'))
+        .map_with_span(Span)
+        .map(Some)
+        .or(empty().to(None))
+        .padded();
 
     let struct_declaration = text::keyword("struct")
         .ignore_then(ident)
-        .then(named_fields.clone().or(tuple_fields.clone()))
-        .map(|(name, fields)| TypeDeclaration::Struct { name, fields });
+        .then(type_parameters.clone())
+        .then(
+            named_fields
+                .clone()
+                .or(tuple_fields.clone())
+                .or(empty_fields.clone()),
+        )
+        .map(
+            |((name, type_parameters), fields)| TypeDeclaration::Struct {
+                name,
+                type_parameters,
+                fields,
+            },
+        );
 
     let enum_variant = ident
-        .then(named_fields.or(tuple_fields).or(empty().to(Vec::new())))
+        .then(named_fields.or(tuple_fields).or(empty_fields))
         .padded();
 
     let enum_declaration = text::keyword("enum")
         .ignore_then(ident)
+        .then(type_parameters)
         .then(
             enum_variant
                 .separated_by(just(','))
                 .allow_trailing()
                 .delimited_by(just('{'), just('}')),
         )
-        .map(|(name, variants)| TypeDeclaration::Enum {
-            name,
-            variants: variants.into_iter().collect(),
-        });
+        .map(
+            |((name, type_parameters), variants)| TypeDeclaration::Enum {
+                name,
+                type_parameters,
+                variants: variants.into_iter().collect(),
+            },
+        );
 
     enum_declaration.or(struct_declaration)
 }

@@ -1,0 +1,24 @@
+enum Option<T> {
+ Some(T),
+ None
+}
+
+let b = Option::Some(20);
+
+use Option::*;
+
+let a = Some(10);
+
+struct Span<T> {
+  start: i32,
+  end: i32,
+  inner: T,
+}
+
+let s = Span {
+  start: 0,
+  end: 20,
+  inner: "Hello, world!"
+};
+
+

@@ -86,5 +86,23 @@ impl Foo for i32 {
 # TODO
 - Add nested pattern matching
 - Add completeness checking for pattern matching
-- Add tuple enum variants
-- Add empty enum variants
+- ~~Add tuple enum variants~~
+- ~~Add empty enum variants~~
+
+# Consolidate Structs and Emums
+
+Have a single struct rule that can take either one identifier or two identifiers separated by `::`.
+In the symbol table we index by the full name, i.e. `Foo::Bar` or `Bar`. Somewhere we have to 
+store the other variants in an enum.
+
+Do we want to encode this in the `Type` type? Because right now we just say it's a named type,
+which doesn't give any sort of info about the type itself, and is more a syntactic 
+representation. Perhaps it should be a more sophisticated struct/enum type with type
+substitutions.
+
+# TODO:
+- Add type checker output printing/playground
+- Figure out how tuple enums work (should we bite the bullet and use type checker information?)
+  - Or define functions that produce an enum representation? 
+  
+

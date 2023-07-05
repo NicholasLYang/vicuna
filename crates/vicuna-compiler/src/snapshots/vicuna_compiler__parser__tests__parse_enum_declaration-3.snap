@@ -8,14 +8,16 @@ Ok:
       - Foo
       - start: 4
         end: 9
+    type_parameters: ~
     variants:
       - - - A
           - start: 11
             end: 13
-        - - - - foo
-              - start: 15
-                end: 18
-            - - String
-              - start: 19
-                end: 27
+        - Named:
+            - - - foo
+                - start: 15
+                  end: 18
+              - - String
+                - start: 19
+                  end: 27
 
