@@ -3,14 +3,22 @@ enum Option<T> {
  None
 }
 
-use Option::*;
+let b = Option::Some(20);
 
-fn foo(a: i32) {
-  print(a);
-}
+use Option::*;
 
 let a = Some(10);
 
-let b = Option::Some(20);
+struct Span<T> {
+  start: i32,
+  end: i32,
+  inner: T
+}
 
-let c = foo(30);
+let s = Span {
+  start: 0,
+  end: 20,
+  inner: "Hello, world!"
+};
+
+
