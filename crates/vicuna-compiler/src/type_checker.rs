@@ -12,7 +12,7 @@
 //!
 use crate::ast::{
     BinaryOp, Expr, ExprBlock, ExprFields, Fields, Function, ImportType, MatchBindings, PostFix,
-    Program, Span, Stmt, TypeDeclaration, TypeFields, TypeSig, UnaryOp, Value,
+    Program, Span, Stmt, TypeDeclaration, TypeFields, TypeParams, TypeSig, UnaryOp, Value,
 };
 use miette::Diagnostic;
 use serde::Serialize;
@@ -282,7 +282,10 @@ enum SymbolTableEntry {
     /// Normal variables like parameters or let bindings
     Variable { ty: Type },
     /// Generic type variables like struct Foo<T>
-    TypeVariable,
+    TypeVariable {
+        /// If this generic has been used previously, store the instantiation
+        previous_instantiation: Option<Type>,
+    },
     /// Structs
     Struct { schema: Arc<StructSchema> },
     /// Enums
@@ -386,9 +389,23 @@ impl TypeChecker {
     }
 
     pub fn check(mut self, program: &Program) -> Vec<TypeError> {
+        debug!("checking program");
         self.check_block(&program.statements);
 
         self.errors
+    }
+
+    fn add_type_parameters(&mut self, type_parameters: &Option<TypeParams>) {
+        if let Some(params) = type_parameters {
+            for param in &params.0 {
+                self.symbol_table.insert(
+                    param.0.clone(),
+                    SymbolTableEntry::TypeVariable {
+                        previous_instantiation: None,
+                    },
+                )
+            }
+        }
     }
 
     fn check_type_sig(&mut self, type_sig: &Span<TypeSig>) -> Option<Type> {
@@ -436,7 +453,12 @@ impl TypeChecker {
 
                     None
                 }
-                Some(SymbolTableEntry::TypeVariable) => Some(Type::Variable(name.0.clone())),
+                Some(SymbolTableEntry::TypeVariable {
+                    previous_instantiation: None,
+                }) => Some(Type::Variable(name.0.clone())),
+                Some(SymbolTableEntry::TypeVariable {
+                    previous_instantiation: Some(ty),
+                }) => Some(ty.clone()),
                 _ => {
                     self.errors
                         .push(TypeError::UndefinedType(name.0.clone(), type_sig.1.clone()));
@@ -478,13 +500,7 @@ impl TypeChecker {
                 type_parameters,
                 fields,
             } => {
-                if let Some(params) = type_parameters {
-                    for param in &params.0 {
-                        self.symbol_table
-                            .insert(param.0.clone(), SymbolTableEntry::TypeVariable)
-                    }
-                }
-
+                self.add_type_parameters(type_parameters);
                 let fields = self.add_type_fields(fields)?;
 
                 let schema = StructSchema {
@@ -508,12 +524,7 @@ impl TypeChecker {
                 type_parameters,
                 variants,
             } => {
-                if let Some(params) = type_parameters {
-                    for param in &params.0 {
-                        self.symbol_table
-                            .insert(param.0.clone(), SymbolTableEntry::TypeVariable);
-                    }
-                }
+                self.add_type_parameters(type_parameters);
 
                 let mut variants_map = HashMap::new();
                 for (variant_name, fields) in variants {
@@ -557,6 +568,7 @@ impl TypeChecker {
                 name,
                 return_type,
                 params,
+                type_parameters,
                 ..
             }) = &stmt.0
             {
@@ -565,6 +577,8 @@ impl TypeChecker {
                 } else {
                     Type::Void
                 };
+
+                self.add_type_parameters(type_parameters);
 
                 let ty = Type::Function {
                     param_types: params
@@ -596,12 +610,15 @@ impl TypeChecker {
                 self.check_expr(expr)?;
             }
             Stmt::Function(Function {
-                name: _,
+                name,
+                type_parameters,
                 params,
                 body,
                 return_type,
             }) => {
+                debug!("checking function {}", name.0);
                 self.enter_scope();
+                self.add_type_parameters(type_parameters);
 
                 for (name, type_sig) in params {
                     let ty = self.check_type_sig(type_sig)?;

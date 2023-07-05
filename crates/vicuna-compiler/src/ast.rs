@@ -13,7 +13,7 @@ pub struct Span<T: Debug + Clone + PartialEq + Serialize>(pub T, pub Range<usize
 
 impl<T: Debug + Clone + PartialEq + Serialize + Hash> Eq for Span<T> {}
 
-type TypeParams = Span<Vec<Span<String>>>;
+pub type TypeParams = Span<Vec<Span<String>>>;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Fields<T: Debug + Clone + PartialEq + Serialize> {
@@ -59,6 +59,7 @@ pub enum TypeDeclaration {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Function {
     pub name: Span<String>,
+    pub type_parameters: Option<TypeParams>,
     pub params: Vec<(Span<String>, Span<TypeSig>)>,
     pub return_type: Option<Span<TypeSig>>,
     pub body: Span<ExprBlock>,
