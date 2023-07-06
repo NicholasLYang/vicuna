@@ -58,12 +58,12 @@ impl chumsky::Error<char> for ParseError {
     }
 }
 
-fn comment() -> impl Parser<char, (), Error = ParseError> + Clone + Copy {
+fn comment() -> impl Parser<char, (), Error = ParseError> + Clone {
     let single_line = just("//").then(take_until(text::newline())).ignored();
 
     let multi_line = just("/*").then(take_until(just("*/"))).ignored();
 
-    single_line.or(multi_line)
+    single_line.or(multi_line).or(empty())
 }
 
 fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
@@ -103,6 +103,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
         let string = string().map_with_span(|s, span| Span(Expr::Value(Value::String(s)), span));
 
         let named_fields = ident
+            .clone()
             .map_with_span(Span)
             .then_ignore(just(':'))
             .then(expr.clone())
@@ -119,9 +120,10 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .map(ExprFields::Tuple);
 
         let enum_literal = ident
+            .clone()
             .map_with_span(Span)
             .then_ignore(just("::"))
-            .then(ident.map_with_span(Span))
+            .then(ident.clone().map_with_span(Span))
             .then(named_fields.clone().or(tuple_fields.clone()))
             .map_with_span(|((enum_name, variant_name), fields), span| {
                 Span(
@@ -135,6 +137,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             });
 
         let struct_literal = ident
+            .clone()
             .map_with_span(Span)
             .then(named_fields)
             .map_with_span(|(name, fields), span| Span(Expr::Struct(name, fields), span));
@@ -146,7 +149,9 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .or(string)
             .or(enum_literal)
             .or(struct_literal)
-            .or(ident.map_with_span(|i, span| Span(Expr::Variable(i), span)))
+            .or(ident
+                .clone()
+                .map_with_span(|i, span| Span(Expr::Variable(i), span)))
             .padded();
 
         let args = expr
@@ -257,7 +262,7 @@ fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Cl
     })
 }
 
-fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone + Copy {
+fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone {
     text::ident()
         .padded()
         .padded_by(comment())
@@ -277,7 +282,11 @@ pub fn keyword(s: &'static str) -> impl Parser<char, (), Error = ParseError> + C
 fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> {
     let ident = ident();
 
-    let field = ident.then_ignore(just(':')).then(type_signature()).padded();
+    let field = ident
+        .clone()
+        .then_ignore(just(':'))
+        .then(type_signature())
+        .padded();
 
     let named_fields = field
         .separated_by(just_padded(','))
@@ -306,7 +315,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
         .padded();
 
     let struct_declaration = keyword("struct")
-        .ignore_then(ident)
+        .ignore_then(ident.clone())
         .then(type_parameters.clone())
         .then(
             named_fields
@@ -323,6 +332,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
         );
 
     let enum_variant = ident
+        .clone()
         .then(named_fields.or(tuple_fields).or(empty_fields))
         .padded();
 
@@ -351,6 +361,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
         let ident = ident();
 
         let function_parameters = ident
+            .clone()
             .then_ignore(just_padded(':'))
             .then(type_signature())
             .padded()
@@ -464,7 +475,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
         );
 
         let function_decl = keyword("fn")
-            .ignore_then(ident)
+            .ignore_then(ident.clone())
             .then(function_parameters)
             .then(optional_return_type)
             .then(expression_block.map_with_span(Span))
@@ -481,7 +492,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             });
 
         let let_decl = keyword("let")
-            .ignore_then(ident)
+            .ignore_then(ident.clone())
             .then_ignore(just_padded('='))
             .then(
                 if_expression
@@ -515,9 +526,13 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             });
 
         let use_stmt = keyword("use")
-            .ignore_then(ident)
+            .ignore_then(ident.clone())
             .then_ignore(just_padded("::"))
-            .then(ident.or(just_padded("*").map_with_span(|s, span| Span(s.to_string(), span))))
+            .then(
+                ident
+                    .clone()
+                    .or(just_padded("*").map_with_span(|s, span| Span(s.to_string(), span))),
+            )
             .then_ignore(just_padded(';'))
             .map_with_span(|(module, name), span| Span(Stmt::Use { module, name }, span));
 
@@ -530,7 +545,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                     .or(empty().to(ImportType::Internal))
                     .map_with_span(Span),
             )
-            .then(ident.map(Some).or(empty().to(None)))
+            .then(ident.clone().map(Some).or(empty().to(None)))
             .then_ignore(just_padded(',').padded().to(()).or(empty()))
             .then(
                 ident
@@ -575,6 +590,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 .then_ignore(just_padded(';'))
                 .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)))
             .padded()
+            .padded_by(comment())
     })
 }
 
