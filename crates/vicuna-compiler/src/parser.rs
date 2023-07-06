@@ -3,6 +3,7 @@ use crate::ast::{
     Program, Span, Stmt, TypeDeclaration, TypeFields, TypeSig, UnaryOp, Value,
 };
 use chumsky::prelude::*;
+use chumsky::primitive::OrderedContainer;
 use miette::Diagnostic;
 use serde::Serialize;
 use std::ops::Range;
@@ -57,16 +58,25 @@ impl chumsky::Error<char> for ParseError {
     }
 }
 
+fn comment() -> impl Parser<char, (), Error = ParseError> + Clone + Copy {
+    let single_line = just("//").then(take_until(text::newline())).ignored();
+
+    let multi_line = just("/*").then(take_until(just("*/"))).ignored();
+
+    single_line.or(multi_line)
+}
+
 fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
     let string_char = none_of('"').or(just('\\').ignore_then(any()));
     just('"')
         .ignore_then(string_char.repeated())
         .then_ignore(just('"'))
+        .padded_by(comment())
         .map(|chars| chars.into_iter().collect())
 }
 
 pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clone {
-    let ident = text::ident().padded();
+    let ident = text::ident().padded().padded_by(comment());
     recursive(|expr| {
         let int = text::int(10)
             .map_with_span(|s: String, span| {
@@ -84,9 +94,10 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
                 )
             });
 
-        let bool = text::keyword("true")
+        let bool = keyword("true")
+            .padded_by(comment())
             .to(true)
-            .or(text::keyword("false").to(false))
+            .or(keyword("false").padded_by(comment()).to(false))
             .map_with_span(|b, span| Span(Expr::Value(Value::Bool(b)), span));
 
         let string = string().map_with_span(|s, span| Span(Expr::Value(Value::String(s)), span));
@@ -247,7 +258,20 @@ fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Cl
 }
 
 fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone + Copy {
-    text::ident().padded().map_with_span(Span)
+    text::ident()
+        .padded()
+        .padded_by(comment())
+        .map_with_span(Span)
+}
+
+pub fn just_padded<C: OrderedContainer<char> + Clone>(
+    inputs: C,
+) -> impl Parser<char, C, Error = ParseError> + Clone {
+    just(inputs).padded_by(comment())
+}
+
+pub fn keyword(s: &'static str) -> impl Parser<char, (), Error = ParseError> + Clone {
+    text::keyword(s).padded_by(comment())
 }
 
 fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> {
@@ -256,32 +280,32 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
     let field = ident.then_ignore(just(':')).then(type_signature()).padded();
 
     let named_fields = field
-        .separated_by(just(','))
+        .separated_by(just_padded(','))
         .allow_trailing()
         .padded()
-        .delimited_by(just('{'), just('}'))
+        .delimited_by(just_padded('{'), just_padded('}'))
         .map(|fields| TypeFields::Named(fields.into_iter().collect()));
 
     let tuple_fields = type_signature()
-        .separated_by(just(','))
+        .separated_by(just_padded(','))
         .allow_trailing()
         .padded()
-        .delimited_by(just('('), just(')'))
+        .delimited_by(just_padded('('), just(')'))
         .map(TypeFields::Tuple);
 
     let empty_fields = empty().to(TypeFields::Empty);
 
     let type_parameters = ident
         .clone()
-        .separated_by(just(','))
+        .separated_by(just_padded(','))
         .allow_trailing()
-        .delimited_by(just('<'), just('>'))
+        .delimited_by(just_padded('<'), just_padded('>'))
         .map_with_span(Span)
         .map(Some)
         .or(empty().to(None))
         .padded();
 
-    let struct_declaration = text::keyword("struct")
+    let struct_declaration = keyword("struct")
         .ignore_then(ident)
         .then(type_parameters.clone())
         .then(
@@ -302,14 +326,14 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
         .then(named_fields.or(tuple_fields).or(empty_fields))
         .padded();
 
-    let enum_declaration = text::keyword("enum")
+    let enum_declaration = keyword("enum")
         .ignore_then(ident)
         .then(type_parameters)
         .then(
             enum_variant
-                .separated_by(just(','))
+                .separated_by(just_padded(','))
                 .allow_trailing()
-                .delimited_by(just('{'), just('}')),
+                .delimited_by(just_padded('{'), just_padded('}')),
         )
         .map(
             |((name, type_parameters), variants)| TypeDeclaration::Enum {
@@ -327,13 +351,13 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
         let ident = ident();
 
         let function_parameters = ident
-            .then_ignore(just(':'))
+            .then_ignore(just_padded(':'))
             .then(type_signature())
             .padded()
-            .separated_by(just(','))
-            .delimited_by(just('('), just(')'));
+            .separated_by(just_padded(','))
+            .delimited_by(just_padded('('), just_padded(')'));
 
-        let return_type = just("->")
+        let return_type = just_padded("->")
             .padded()
             .ignore_then(type_signature())
             .map(Some)
@@ -345,11 +369,11 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
         let mut expression_block = Recursive::declare();
 
         if_expression.define(
-            text::keyword("if")
+            keyword("if")
                 .padded()
                 .ignore_then(expression().map(Box::new))
                 .then(expression_block.clone().map_with_span(Span))
-                .then_ignore(text::keyword("else"))
+                .then_ignore(keyword("else"))
                 .then(expression_block.clone().map_with_span(Span))
                 .map_with_span(|((condition, then_block), else_block), span| {
                     Span(
@@ -368,23 +392,23 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .then(
                 empty()
                     .to(None)
-                    .or(just(':').ignore_then(ident.clone()).map(Some)),
+                    .or(just_padded(':').ignore_then(ident.clone()).map(Some)),
             )
-            .separated_by(just(','))
+            .separated_by(just_padded(','))
             .allow_trailing()
-            .delimited_by(just('{'), just('}'))
+            .delimited_by(just_padded('{'), just_padded('}'))
             .map(|bindings| MatchBindings::Named(bindings.into_iter().collect::<Vec<_>>()));
 
         let tuple_bindings = ident
             .clone()
-            .separated_by(just(','))
+            .separated_by(just_padded(','))
             .allow_trailing()
-            .delimited_by(just('('), just(')'))
+            .delimited_by(just_padded('('), just_padded(')'))
             .map(|bindings| MatchBindings::Tuple(bindings.into_iter().collect::<Vec<_>>()));
 
         let match_pattern = ident
             .clone()
-            .then_ignore(just("::"))
+            .then_ignore(just_padded("::"))
             .then(ident.clone())
             .then(
                 named_bindings
@@ -405,18 +429,18 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             });
 
         match_expression.define(
-            text::keyword("match")
+            keyword("match")
                 .padded()
                 .ignore_then(expression().map(Box::new))
                 .then(
                     match_pattern
-                        .then_ignore(just("=>"))
+                        .then_ignore(just_padded("=>"))
                         .then(expression_block.clone().map_with_span(Span))
                         .padded()
-                        .separated_by(just(','))
+                        .separated_by(just_padded(','))
                         .allow_trailing()
                         .padded()
-                        .delimited_by(just('{'), just('}')),
+                        .delimited_by(just_padded('{'), just_padded('}')),
                 )
                 .map_with_span(|(expr, cases), span| Span(Expr::Match { expr, cases }, span)),
         );
@@ -434,12 +458,12 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                         .map(Some)
                         .or(empty().to(None)),
                 )
-                .delimited_by(just('{'), just('}'))
+                .delimited_by(just_padded('{'), just_padded('}'))
                 .map(|(stmts, end_expr)| ExprBlock { stmts, end_expr })
                 .padded(),
         );
 
-        let function_decl = text::keyword("fn")
+        let function_decl = keyword("fn")
             .ignore_then(ident)
             .then(function_parameters)
             .then(optional_return_type)
@@ -456,24 +480,26 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 )
             });
 
-        let let_decl = text::keyword("let")
+        let let_decl = keyword("let")
             .ignore_then(ident)
-            .then_ignore(just('='))
+            .then_ignore(just_padded('='))
             .then(
                 if_expression
                     .or(match_expression)
-                    .or(expression().padded().then_ignore(just(';'))),
+                    .or(expression().padded().then_ignore(just_padded(';'))),
             )
             .map_with_span(|(ident, expr), span| Span(Stmt::Let(ident, expr), span));
 
-        let block = stmt.repeated().delimited_by(just('{'), just('}'));
+        let block = stmt
+            .repeated()
+            .delimited_by(just_padded('{'), just_padded('}'));
 
-        let optional_else = text::keyword("else")
+        let optional_else = keyword("else")
             .padded()
             .ignore_then(block.clone())
             .or(empty().to(Vec::new()));
 
-        let if_stmt = text::keyword("if")
+        let if_stmt = keyword("if")
             .ignore_then(expression())
             .then(block)
             .then(optional_else)
@@ -488,34 +514,34 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 )
             });
 
-        let use_stmt = text::keyword("use")
+        let use_stmt = keyword("use")
             .ignore_then(ident)
-            .then_ignore(just("::"))
-            .then(ident.or(just("*").map_with_span(|s, span| Span(s.to_string(), span))))
-            .then_ignore(just(';'))
+            .then_ignore(just_padded("::"))
+            .then(ident.or(just_padded("*").map_with_span(|s, span| Span(s.to_string(), span))))
+            .then_ignore(just_padded(';'))
             .map_with_span(|(module, name), span| Span(Stmt::Use { module, name }, span));
 
-        let import_stmt = text::keyword("import")
+        let import_stmt = keyword("import")
             .padded()
             .ignore_then(
-                text::keyword("extern")
+                keyword("extern")
                     .padded()
                     .to(ImportType::External)
                     .or(empty().to(ImportType::Internal))
                     .map_with_span(Span),
             )
             .then(ident.map(Some).or(empty().to(None)))
-            .then_ignore(just(',').padded().to(()).or(empty()))
+            .then_ignore(just_padded(',').padded().to(()).or(empty()))
             .then(
                 ident
-                    .separated_by(just(','))
+                    .separated_by(just_padded(','))
                     .allow_trailing()
-                    .delimited_by(just('{'), just('}'))
+                    .delimited_by(just_padded('{'), just_padded('}'))
                     .or(empty().to(Vec::new())),
             )
-            .then_ignore(text::keyword("from").padded())
+            .then_ignore(keyword("from").padded())
             .then(string().map_with_span(Span))
-            .then_ignore(just(';'))
+            .then_ignore(just_padded(';'))
             .map_with_span(
                 |(((import_type, default_import), named_imports), module), span| {
                     Span(
@@ -533,9 +559,9 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
         let type_declaration =
             type_declaration().map_with_span(|decl, span| Span(Stmt::Type(decl), span));
 
-        let return_stmt = text::keyword("return")
+        let return_stmt = keyword("return")
             .ignore_then(expression().padded().map(Some).or(empty().to(None)))
-            .then_ignore(just(';'))
+            .then_ignore(just_padded(';'))
             .map_with_span(|expr, span| Span(Stmt::Return(expr), span));
 
         function_decl
@@ -546,7 +572,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .or(type_declaration)
             .or(use_stmt)
             .or(expression()
-                .then_ignore(just(';'))
+                .then_ignore(just_padded(';'))
                 .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)))
             .padded()
     })
