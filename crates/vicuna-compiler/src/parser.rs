@@ -63,7 +63,11 @@ fn comment() -> impl Parser<char, (), Error = ParseError> + Clone {
 
     let multi_line = just("/*").then(take_until(just("*/"))).ignored();
 
-    single_line.or(multi_line).or(empty())
+    single_line.or(multi_line)
+}
+
+fn optional_comment() -> impl Parser<char, (), Error = ParseError> + Clone {
+    comment().or(empty())
 }
 
 fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
@@ -71,12 +75,12 @@ fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
     just('"')
         .ignore_then(string_char.repeated())
         .then_ignore(just('"'))
-        .padded_by(comment())
+        .padded_by(optional_comment())
         .map(|chars| chars.into_iter().collect())
 }
 
 pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clone {
-    let ident = text::ident().padded().padded_by(comment());
+    let ident = text::ident().padded().padded_by(optional_comment());
     recursive(|expr| {
         let int = text::int(10)
             .map_with_span(|s: String, span| {
@@ -95,9 +99,9 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             });
 
         let bool = keyword("true")
-            .padded_by(comment())
+            .padded_by(optional_comment())
             .to(true)
-            .or(keyword("false").padded_by(comment()).to(false))
+            .or(keyword("false").padded_by(optional_comment()).to(false))
             .map_with_span(|b, span| Span(Expr::Value(Value::Bool(b)), span));
 
         let string = string().map_with_span(|s, span| Span(Expr::Value(Value::String(s)), span));
@@ -265,18 +269,18 @@ fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Cl
 fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone {
     text::ident()
         .padded()
-        .padded_by(comment())
+        .padded_by(optional_comment())
         .map_with_span(Span)
 }
 
 pub fn just_padded<C: OrderedContainer<char> + Clone>(
     inputs: C,
 ) -> impl Parser<char, C, Error = ParseError> + Clone {
-    just(inputs).padded_by(comment())
+    just(inputs).padded_by(optional_comment())
 }
 
 pub fn keyword(s: &'static str) -> impl Parser<char, (), Error = ParseError> + Clone {
-    text::keyword(s).padded_by(comment())
+    text::keyword(s).padded_by(optional_comment())
 }
 
 fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> {
@@ -590,12 +594,17 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 .then_ignore(just_padded(';'))
                 .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)))
             .padded()
-            .padded_by(comment())
+            .padded_by(optional_comment())
     })
 }
 
 fn parser() -> impl Parser<char, Vec<Span<Stmt>>, Error = ParseError> {
-    statement().repeated().then_ignore(end())
+    comment()
+        .to(None)
+        .or(statement().map(Some))
+        .repeated()
+        .flatten()
+        .then_ignore(end())
 }
 
 pub fn parse(source: &str) -> (Option<Program>, Vec<ParseError>) {
