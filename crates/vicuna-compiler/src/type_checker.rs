@@ -34,9 +34,13 @@ pub enum Type {
     Bool,
     Void,
     String,
-    // Generic types
-    Variable(Name),
-    // A type for JS values
+    /// Generic types
+    Variable {
+        name: Name,
+        /// Index into type variables vector
+        idx: usize,
+    },
+    /// A type for JS values
     Js,
     Array(Box<Type>),
     Function {
@@ -128,7 +132,7 @@ impl Debug for Type {
             Type::Void => write!(f, "void"),
             Type::String => write!(f, "string"),
             Type::Js => write!(f, "<js value>"),
-            Type::Variable(name) => write!(f, "{}", name),
+            Type::Variable(name, idx) => write!(f, "{}@{}", name, idx),
             Type::Array(ty) => write!(f, "{}[]", ty),
             Type::Function {
                 param_types,
@@ -283,8 +287,8 @@ enum SymbolTableEntry {
     Variable { ty: Type },
     /// Generic type variables like struct Foo<T>
     TypeVariable {
-        /// If this generic has been used previously, store the instantiation
-        previous_instantiation: Option<Type>,
+        /// Index into the `type_variables` vector
+        idx: usize,
     },
     /// Structs
     Struct { schema: Arc<StructSchema> },
@@ -294,6 +298,7 @@ enum SymbolTableEntry {
 
 pub struct TypeChecker {
     symbol_table: SymbolTable<SymbolTableEntry>,
+    type_variables: Vec<Option<Type>>,
     return_type: Option<Type>,
     pub(crate) errors: Vec<TypeError>,
 }
@@ -375,6 +380,7 @@ impl TypeChecker {
     pub fn new() -> Self {
         Self {
             symbol_table: SymbolTable::new(),
+            type_variables: Vec::new(),
             return_type: None,
             errors: Vec::new(),
         }
@@ -398,12 +404,10 @@ impl TypeChecker {
     fn add_type_parameters(&mut self, type_parameters: &Option<TypeParams>) {
         if let Some(params) = type_parameters {
             for param in &params.0 {
-                self.symbol_table.insert(
-                    param.0.clone(),
-                    SymbolTableEntry::TypeVariable {
-                        previous_instantiation: None,
-                    },
-                )
+                self.type_variables.push(None);
+                let idx = self.type_variables.len() - 1;
+                self.symbol_table
+                    .insert(param.0.clone(), SymbolTableEntry::TypeVariable { idx })
             }
         }
     }
@@ -453,12 +457,14 @@ impl TypeChecker {
 
                     None
                 }
-                Some(SymbolTableEntry::TypeVariable {
-                    previous_instantiation: None,
-                }) => Some(Type::Variable(name.0.clone())),
-                Some(SymbolTableEntry::TypeVariable {
-                    previous_instantiation: Some(ty),
-                }) => Some(ty.clone()),
+                Some(SymbolTableEntry::TypeVariable { idx }) => Some(
+                    self.type_variables[*idx]
+                        .clone()
+                        .unwrap_or_else(|| Type::Variable {
+                            name: name.0.clone(),
+                            idx,
+                        }),
+                ),
                 _ => {
                     self.errors
                         .push(TypeError::UndefinedType(name.0.clone(), type_sig.1.clone()));
@@ -466,6 +472,21 @@ impl TypeChecker {
                     None
                 }
             },
+        }
+    }
+
+    fn unify(&mut self, t1: Type, t2: Type) -> bool {
+        match (t1, t2) {
+            (Type::Variable { .. }, Type::Variable { .. }) => todo!("too fancy, will handle later"),
+            (
+                Type::Variable {
+                    name: t1_name,
+                    idx: t1_idx,
+                },
+                t2,
+            ) => {
+                let var = self.type_variables.get_mut(t1_idx).unwrap();
+            }
         }
     }
 
