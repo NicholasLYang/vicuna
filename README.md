@@ -11,9 +11,10 @@ the current reality for Vicuna.
 The name isn't even set in stone. I just liked the sound and wanted a name that referenced camels.
 
 Currently the compiler can build and compile simple programs with basic type checking. The current goal is to add:
-- [ ] Generics
+- [x] Struct and enum generics
+- [ ] Function generics with type inference
 - [ ] Traits
-- [ ] Enums and pattern matching
+- [x] Enums and pattern matching (well, an MVP)
 
 ## Why
 
