@@ -3,6 +3,7 @@
 members = [
   "crates/vic",
   "crates/vicuna-compiler",
+  "crates/vicuna-runtime",
   "crates/vicuna-wasm",
 ]
 
