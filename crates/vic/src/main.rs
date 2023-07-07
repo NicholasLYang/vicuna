@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
+use colored::Colorize;
 use miette::{Error, Report};
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vicuna_compiler::Errors;
 
@@ -9,11 +11,11 @@ use vicuna_compiler::Errors;
 #[command(author, version, about)]
 enum Command {
     /// Run a Vicuna file
-    Run { source_path: String },
+    Run { source_path: PathBuf },
     /// Check if a Vicuna file is valid
-    Check { source_path: String },
+    Check { source_path: PathBuf },
     /// Compile a Vicuna file to JavaScript
-    Build { source_path: String },
+    Build { source_path: PathBuf },
 }
 
 fn print_errors(source: String, errors: Errors) {
@@ -34,22 +36,34 @@ fn print_errors(source: String, errors: Errors) {
     }
 }
 
-fn build(source_path: String) -> Result<String> {
+fn build(source_path: &Path) -> Result<PathBuf> {
     let source = fs::read_to_string(source_path)?;
     let output = vicuna_compiler::compile(&source)?;
+    println!("{} {}", "Compiled".blue().bold(), source_path.display());
 
+    let output_path = source_path.with_extension("v.js");
     print_errors(source, output.errors);
-    println!("{}", output.js);
-    Ok(output.js)
+    fs::write(&output_path, output.js)?;
+    println!("{} {}", "Emitted".blue().bold(), output_path.display());
+
+    Ok(output_path)
 }
 
-fn run(source_path: String) -> Result<()> {
-    build(source_path)?;
+fn run(source_path: &Path) -> Result<()> {
+    let output_path = build(source_path)?;
+    match vicuna_runtime::execute_file(&output_path) {
+        Ok(()) => {
+            println!("{}", "Done".blue().bold());
+        }
+        Err(e) => {
+            eprintln!("error: {}", e);
+        }
+    }
 
     Ok(())
 }
 
-fn check(source_path: String) -> Result<()> {
+fn check(source_path: &Path) -> Result<()> {
     let source = fs::read_to_string(source_path)?;
     let errors = vicuna_compiler::check(&source);
     if errors.parse_errors.is_empty() && errors.type_errors.is_empty() {
@@ -67,10 +81,10 @@ fn main() -> Result<()> {
     let command = Command::parse();
 
     match command {
-        Command::Run { source_path } => run(source_path)?,
-        Command::Check { source_path } => check(source_path)?,
+        Command::Run { source_path } => run(&source_path)?,
+        Command::Check { source_path } => check(&source_path)?,
         Command::Build { source_path } => {
-            build(source_path)?;
+            build(&source_path)?;
         }
     }
 
