@@ -12,7 +12,7 @@ The name isn't even set in stone. I just liked the sound and wanted a name that 
 
 Currently the compiler can build and compile simple programs with basic type checking. The current goal is to add:
 - [x] Struct and enum generics
-- [ ] Function generics with type inference
+- [x] Function generics with type inference
 - [ ] Traits
 - [x] Enums and pattern matching (well, an MVP)
 
