@@ -35,15 +35,12 @@ pub enum Type {
     Void,
     String,
     /// Generic types
-    Variable {
-        name: Name,
-        /// Index into type variables vector
-        idx: usize,
-    },
+    Variable(Name),
     /// A type for JS values
     Js,
     Array(Box<Type>),
     Function {
+        type_parameters: Vec<Name>,
         param_types: Vec<Type>,
         return_type: Box<Type>,
     },
@@ -132,12 +129,23 @@ impl Debug for Type {
             Type::Void => write!(f, "void"),
             Type::String => write!(f, "string"),
             Type::Js => write!(f, "<js value>"),
-            Type::Variable(name, idx) => write!(f, "{}@{}", name, idx),
+            Type::Variable(name) => write!(f, "{}", name),
             Type::Array(ty) => write!(f, "{}[]", ty),
             Type::Function {
                 param_types,
                 return_type,
+                type_parameters,
             } => {
+                if !type_parameters.is_empty() {
+                    write!(f, "<")?;
+                    for (i, type_parameter) in type_parameters.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", type_parameter)?;
+                    }
+                    write!(f, ">")?;
+                }
                 write!(f, "(")?;
                 for (i, param_type) in param_types.iter().enumerate() {
                     if i > 0 {
@@ -460,10 +468,7 @@ impl TypeChecker {
                 Some(SymbolTableEntry::TypeVariable { idx }) => Some(
                     self.type_variables[*idx]
                         .clone()
-                        .unwrap_or_else(|| Type::Variable {
-                            name: name.0.clone(),
-                            idx,
-                        }),
+                        .unwrap_or_else(|| Type::Variable(name.0.clone())),
                 ),
                 _ => {
                     self.errors
@@ -472,21 +477,6 @@ impl TypeChecker {
                     None
                 }
             },
-        }
-    }
-
-    fn unify(&mut self, t1: Type, t2: Type) -> bool {
-        match (t1, t2) {
-            (Type::Variable { .. }, Type::Variable { .. }) => todo!("too fancy, will handle later"),
-            (
-                Type::Variable {
-                    name: t1_name,
-                    idx: t1_idx,
-                },
-                t2,
-            ) => {
-                let var = self.type_variables.get_mut(t1_idx).unwrap();
-            }
         }
     }
 
@@ -601,12 +591,20 @@ impl TypeChecker {
 
                 self.add_type_parameters(type_parameters);
 
+                let type_parameters = type_parameters
+                    .iter()
+                    .map(|p| &p.0)
+                    .flatten()
+                    .map(|param| param.0.clone())
+                    .collect::<Vec<_>>();
+
                 let ty = Type::Function {
                     param_types: params
                         .iter()
                         .map(|(_, ty)| self.check_type_sig(ty))
                         .collect::<Option<Vec<_>>>()?,
                     return_type: Box::new(return_type),
+                    type_parameters,
                 };
                 self.symbol_table
                     .insert(name.0.clone(), SymbolTableEntry::Variable { ty });
@@ -902,36 +900,41 @@ impl TypeChecker {
                 }
 
                 let callee_ty = self.check_expr(callee)?;
-                if let Type::Function {
+                let Type::Function {
                     param_types,
                     return_type,
-                } = callee_ty
-                {
-                    if args.len() != param_types.len() {
-                        self.errors.push(TypeError::ArityMismatch(
-                            param_types.len(),
-                            args.len(),
-                            args_span.clone(),
-                        ));
-                    }
-
-                    for (arg, param_type) in args.iter().zip(param_types) {
-                        let arg_ty = self.check_expr(arg)?;
-                        if arg_ty != param_type {
-                            self.errors.push(TypeError::TypeMismatch {
-                                expected_ty: param_type.clone(),
-                                received_ty: arg_ty.clone(),
-                                span: arg.1.clone(),
-                            });
-                        }
-                    }
-
-                    Some(*return_type)
-                } else {
+                    ..
+                } = callee_ty else {
                     self.errors
                         .push(TypeError::NotCallable(callee_ty, callee.1.clone()));
-                    None
+                    return None;
+                };
+
+                if args.len() != param_types.len() {
+                    self.errors.push(TypeError::ArityMismatch(
+                        param_types.len(),
+                        args.len(),
+                        args_span.clone(),
+                    ));
                 }
+
+                // Any generic substitution that we may need to apply to the return type;
+
+                let mut substitutions = HashMap::new();
+                for (arg, param_type) in args.iter().zip(param_types) {
+                    let arg_ty = self.check_expr(arg)?;
+                    if let Type::Variable(name) = param_type {
+                        substitutions.insert(name, arg_ty.clone());
+                    } else if arg_ty != param_type {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected_ty: param_type.clone(),
+                            received_ty: arg_ty.clone(),
+                            span: arg.1.clone(),
+                        });
+                    }
+                }
+
+                Some(Self::apply_substitutions(*return_type, &substitutions))
             }
             Expr::PostFix(callee, Span(PostFix::Field(field), field_span)) => {
                 let callee_ty = self.check_expr(callee)?;
@@ -1242,6 +1245,45 @@ impl TypeChecker {
             Some(ty) => Span(InferredType::Known(ty), expr.1.clone()),
             None => Span(InferredType::Unknown, expr.1.clone()),
         })
+    }
+
+    fn apply_substitutions(ty: Type, substitutions: &HashMap<Name, Type>) -> Type {
+        match ty {
+            Type::Variable(name) => {
+                if let Some(substitution) = substitutions.get(&name) {
+                    substitution.clone()
+                } else {
+                    Type::Variable(name)
+                }
+            }
+            Type::Array(inner_ty) => Type::Array(Box::new(Self::apply_substitutions(
+                *inner_ty,
+                substitutions,
+            ))),
+            Type::Struct {
+                schema,
+                type_arguments,
+            } => Type::Struct {
+                schema,
+                type_arguments: type_arguments
+                    .into_iter()
+                    .map(|arg| Self::apply_substitutions(arg, substitutions))
+                    .collect(),
+            },
+            Type::Function {
+                param_types,
+                return_type,
+                type_parameters,
+            } => Type::Function {
+                param_types: param_types
+                    .into_iter()
+                    .map(|arg| Self::apply_substitutions(arg, substitutions))
+                    .collect(),
+                return_type: Box::new(Self::apply_substitutions(*return_type, substitutions)),
+                type_parameters,
+            },
+            ty => ty,
+        }
     }
 
     fn instantiate_variable(

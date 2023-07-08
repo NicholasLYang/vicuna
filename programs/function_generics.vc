@@ -3,11 +3,4 @@ fn println<T>(a: T) {
   print("\n");
 }
 
-fn outer<T>(a: T) {
-  fn inner<U>(b: U) {
-    println(b);
-  }
-  inner(a);
-}
-
 println(10);
