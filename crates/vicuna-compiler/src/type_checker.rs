@@ -911,11 +911,18 @@ impl TypeChecker {
 
                 // Any generic substitution that we may need to apply to the return type;
 
-                let mut substitutions = HashMap::new();
                 for (arg, param_type) in args.iter().zip(param_types) {
                     let arg_ty = self.check_expr(arg)?;
                     if let Type::Variable(name) = param_type {
-                        substitutions.insert(name, arg_ty.clone());
+                        let entry = self
+                            .symbol_table
+                            .lookup(&name)
+                            .expect("variable not in symbol table");
+                        // TODO: This isn't quite right because it doesn't account for
+                        //       type variables that are shadowed.
+                        if let SymbolTableEntry::TypeVariable { idx } = entry {
+                            self.type_variables[*idx] = Some(arg_ty.clone());
+                        }
                     } else if arg_ty != param_type {
                         self.errors.push(TypeError::TypeMismatch {
                             expected_ty: param_type.clone(),
@@ -925,7 +932,7 @@ impl TypeChecker {
                     }
                 }
 
-                Some(Self::apply_substitutions(*return_type, &substitutions))
+                Some(self.apply_substitutions(*return_type))
             }
             Expr::PostFix(callee, Span(PostFix::Field(field), field_span)) => {
                 let callee_ty = self.check_expr(callee)?;
@@ -1238,19 +1245,18 @@ impl TypeChecker {
         })
     }
 
-    fn apply_substitutions(ty: Type, substitutions: &HashMap<Name, Type>) -> Type {
+    fn apply_substitutions(&self, ty: Type) -> Type {
         match ty {
             Type::Variable(name) => {
-                if let Some(substitution) = substitutions.get(&name) {
-                    substitution.clone()
-                } else {
-                    Type::Variable(name)
-                }
+                let Some(SymbolTableEntry::TypeVariable { idx }) = self.symbol_table.lookup(&name) else {
+                    return Type::Variable(name)
+                };
+
+                self.type_variables[*idx]
+                    .clone()
+                    .unwrap_or(Type::Variable(name))
             }
-            Type::Array(inner_ty) => Type::Array(Box::new(Self::apply_substitutions(
-                *inner_ty,
-                substitutions,
-            ))),
+            Type::Array(inner_ty) => Type::Array(Box::new(self.apply_substitutions(*inner_ty))),
             Type::Struct {
                 schema,
                 type_arguments,
@@ -1258,7 +1264,7 @@ impl TypeChecker {
                 schema,
                 type_arguments: type_arguments
                     .into_iter()
-                    .map(|arg| Self::apply_substitutions(arg, substitutions))
+                    .map(|arg| self.apply_substitutions(arg))
                     .collect(),
             },
             Type::Function {
@@ -1268,9 +1274,9 @@ impl TypeChecker {
             } => Type::Function {
                 param_types: param_types
                     .into_iter()
-                    .map(|arg| Self::apply_substitutions(arg, substitutions))
+                    .map(|arg| self.apply_substitutions(arg))
                     .collect(),
-                return_type: Box::new(Self::apply_substitutions(*return_type, substitutions)),
+                return_type: Box::new(self.apply_substitutions(*return_type)),
                 type_parameters,
             },
             ty => ty,
@@ -1283,6 +1289,10 @@ impl TypeChecker {
         expr_ty: Type,
         expr_span: Range<usize>,
     ) {
+        debug!(
+            "instantiating type variable `{}` with type {}",
+            type_var_name, expr_ty
+        );
         let Some(SymbolTableEntry::TypeVariable { idx }) = self.symbol_table.lookup(type_var_name) else {
             self.errors.push(TypeError::UndefinedType(type_var_name.to_string(), expr_span));
             return;
@@ -1388,7 +1398,8 @@ impl TypeChecker {
                             self.instantiate_type_variable(name, expr_ty, field_value.1.clone());
                         }
                         Some(expected_ty) => {
-                            if &expr_ty != expected_ty {
+                            let expected_ty = self.apply_substitutions(expected_ty.clone());
+                            if &expr_ty != &expected_ty {
                                 self.errors.push(TypeError::TypeMismatch {
                                     expected_ty: expected_ty.clone(),
                                     received_ty: expr_ty.clone(),
