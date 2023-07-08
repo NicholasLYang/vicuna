@@ -226,9 +226,9 @@ impl<T> SymbolTable<T> {
         self.scopes[self.current_scope].insert(name, value);
     }
 
-    fn lookup(&self, name: &Name) -> Option<&T> {
+    fn lookup(&self, name: impl AsRef<str>) -> Option<&T> {
         for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(name) {
+            if let Some(ty) = scope.get(name.as_ref()) {
                 return Some(ty);
             }
         }
@@ -872,18 +872,9 @@ impl TypeChecker {
                         self.symbol_table.lookup(name).cloned()
                     {
                         if let FieldsSchema::Tuple(schema_fields) = &schema.fields {
-                            let mut instantiated_variables = HashMap::new();
-                            self.compare_tuple_fields(
-                                &mut instantiated_variables,
-                                args,
-                                schema_fields,
-                                args_span.clone(),
-                            )?;
-                            let type_arguments = self.get_type_arguments(
-                                &instantiated_variables,
-                                &schema,
-                                expr.1.clone(),
-                            )?;
+                            self.compare_tuple_fields(args, schema_fields, args_span.clone())?;
+                            let type_arguments =
+                                self.get_type_arguments(&schema, expr.1.clone())?;
 
                             return Some(Type::Struct {
                                 schema: schema.clone(),
@@ -1009,7 +1000,7 @@ impl TypeChecker {
                 };
 
                 let type_arguments =
-                    self.compare_fields(&name.0, expr.1.clone(), literal_fields, &schema)?;
+                    self.check_fields(&name.0, expr.1.clone(), literal_fields, &schema)?;
 
                 Some(Type::Struct {
                     schema: schema.clone(),
@@ -1036,7 +1027,7 @@ impl TypeChecker {
                 };
 
                 let type_arguments =
-                    self.compare_fields(&variant_name.0, expr.1.clone(), fields, &variant_fields)?;
+                    self.check_fields(&variant_name.0, expr.1.clone(), fields, &variant_fields)?;
 
                 Some(Type::Enum {
                     schema: schema.clone(),
@@ -1286,14 +1277,18 @@ impl TypeChecker {
         }
     }
 
-    fn instantiate_variable(
+    fn instantiate_type_variable(
         &mut self,
-        var_name: &str,
+        type_var_name: &str,
         expr_ty: Type,
         expr_span: Range<usize>,
-        instantiated_variables: &mut HashMap<Name, Type>,
     ) {
-        if let Some(instantiated_ty) = instantiated_variables.get(var_name) {
+        let Some(SymbolTableEntry::TypeVariable { idx }) = self.symbol_table.lookup(type_var_name) else {
+            self.errors.push(TypeError::UndefinedType(type_var_name.to_string(), expr_span));
+            return;
+        };
+
+        if let Some(instantiated_ty) = &self.type_variables[*idx] {
             if &expr_ty != instantiated_ty {
                 self.errors.push(TypeError::TypeMismatch {
                     expected_ty: instantiated_ty.clone(),
@@ -1302,13 +1297,12 @@ impl TypeChecker {
                 });
             }
         } else {
-            instantiated_variables.insert(var_name.to_string(), expr_ty);
+            self.type_variables[*idx] = Some(expr_ty);
         }
     }
 
     fn compare_tuple_fields(
         &mut self,
-        instantiated_variables: &mut HashMap<Name, Type>,
         tuple_entries: &[Span<Expr>],
         schema_fields: &[Type],
         struct_span: Range<usize>,
@@ -1317,12 +1311,7 @@ impl TypeChecker {
             let expr_ty = self.check_expr(entry)?;
             match schema_fields.get(i) {
                 Some(Type::Variable(name)) => {
-                    self.instantiate_variable(
-                        &name,
-                        expr_ty,
-                        entry.1.clone(),
-                        instantiated_variables,
-                    );
+                    self.instantiate_type_variable(&name, expr_ty, entry.1.clone());
                 }
                 Some(expected_ty) => {
                     if &expr_ty != expected_ty {
@@ -1348,26 +1337,30 @@ impl TypeChecker {
 
     fn get_type_arguments(
         &mut self,
-        instantiated_variables: &HashMap<Name, Type>,
         schema: &StructSchema,
         struct_span: Range<usize>,
     ) -> Option<Vec<Type>> {
         let mut type_arguments = vec![];
         for type_param in &schema.type_parameters {
-            let Some(type_arg) = instantiated_variables.get(type_param) else {
-                self.errors.push(TypeError::UnusedTypeParameter {
-                    name: type_param.clone(),
-                    span: struct_span,
-                });
+            let Some(SymbolTableEntry::TypeVariable { idx }) = self.symbol_table.lookup(type_param) else {
+                self.errors.push(TypeError::UndefinedType(type_param.clone(), struct_span.clone()));
                 return None
             };
-            type_arguments.push(type_arg.clone());
+            if let Some(type_arg) = &self.type_variables[*idx] {
+                type_arguments.push(type_arg.clone());
+            } else {
+                self.errors.push(TypeError::UnusedTypeParameter {
+                    name: type_param.clone(),
+                    span: struct_span.clone(),
+                });
+                return None;
+            }
         }
 
         Some(type_arguments)
     }
 
-    fn compare_fields(
+    fn check_fields(
         &mut self,
         struct_name: &str,
         struct_span: Range<usize>,
@@ -1386,22 +1379,13 @@ impl TypeChecker {
             return None;
         }
 
-        // We keep track of the instantiated variables to make sure
-        // we don't have conflicting instantiations.
-        let mut instantiated_variables = HashMap::new();
-
         match (literal_fields, &struct_schema.fields) {
             (Fields::Named(literal_fields), FieldsSchema::Named(schema_fields)) => {
                 for (field_name, field_value) in literal_fields {
                     let expr_ty = self.check_expr(field_value)?;
                     match schema_fields.get(&field_name.0) {
                         Some(Type::Variable(name)) => {
-                            self.instantiate_variable(
-                                name,
-                                expr_ty,
-                                field_value.1.clone(),
-                                &mut instantiated_variables,
-                            );
+                            self.instantiate_type_variable(name, expr_ty, field_value.1.clone());
                         }
                         Some(expected_ty) => {
                             if &expr_ty != expected_ty {
@@ -1423,12 +1407,7 @@ impl TypeChecker {
                 }
             }
             (Fields::Tuple(entries), FieldsSchema::Tuple(schema_fields)) => {
-                self.compare_tuple_fields(
-                    &mut instantiated_variables,
-                    entries,
-                    schema_fields,
-                    struct_span.clone(),
-                )?;
+                self.compare_tuple_fields(entries, schema_fields, struct_span.clone())?;
             }
             (Fields::Empty, FieldsSchema::Empty) => {}
             _ => {
@@ -1442,8 +1421,7 @@ impl TypeChecker {
             }
         }
 
-        let type_arguments =
-            self.get_type_arguments(&instantiated_variables, struct_schema, struct_span)?;
+        let type_arguments = self.get_type_arguments(struct_schema, struct_span)?;
         Some(type_arguments)
     }
 }

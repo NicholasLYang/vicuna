@@ -1,4 +1,4 @@
-"Enum generics";
+// Enum generics
 enum Option<T> {
  Some(T),
  None
@@ -6,12 +6,12 @@ enum Option<T> {
 
 let b = Option::Some(20);
 
-"Enum variants added to scope.";
+// Enum variants added to scope.
 use Option::*;
 
 let a = Some(10);
 
-"Struct generics";
+// Struct generics
 struct Span<T> {
   start: i32,
   end: i32,
@@ -22,4 +22,20 @@ let s = Span {
   start: 0,
   end: 20,
   inner: "Hello, world!"
+};
+
+// Nested generics
+
+struct Expr<T> {
+  span: Span<T>,
+  value: i32,
+}
+
+let e = Expr {
+  span: Span {
+    start: 10,
+    end: 20,
+    inner: "Hello, world!"
+  },
+  value: 10
 };
