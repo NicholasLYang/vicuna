@@ -478,22 +478,34 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 .padded(),
         );
 
+        let type_parameters = ident
+            .clone()
+            .separated_by(just(','))
+            .delimited_by(just('<'), just('>'))
+            .map_with_span(Span)
+            .map(Some)
+            .or(empty().to(None));
+
         let function_decl = keyword("fn")
             .ignore_then(ident.clone())
+            .then(type_parameters)
             .then(function_parameters)
             .then(optional_return_type)
             .then(expression_block.map_with_span(Span))
-            .map_with_span(|(((name, params), return_type), body), span| {
-                Span(
-                    Stmt::Function(Function {
-                        name,
-                        params,
-                        return_type,
-                        body,
-                    }),
-                    span,
-                )
-            });
+            .map_with_span(
+                |((((name, type_parameters), params), return_type), body), span| {
+                    Span(
+                        Stmt::Function(Function {
+                            name,
+                            type_parameters,
+                            params,
+                            return_type,
+                            body,
+                        }),
+                        span,
+                    )
+                },
+            );
 
         let let_decl = keyword("let")
             .ignore_then(ident.clone())

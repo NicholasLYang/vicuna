@@ -1,0 +1,6 @@
+fn println<T>(a: T) {
+  print(a);
+  print("\n");
+}
+
+println(10);
