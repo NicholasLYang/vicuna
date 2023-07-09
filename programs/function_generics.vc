@@ -4,3 +4,4 @@ fn println<T>(a: T) {
 }
 
 println(10);
+println("Hello, World!");

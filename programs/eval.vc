@@ -1,0 +1,4 @@
+enum Expr {
+  Binary(Expr, Expr, String),
+  Integer(i32)
+}
