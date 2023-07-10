@@ -1,4 +1,4 @@
-use crate::type_checker::{EnumSchema, Name, StructSchema, Type};
+use crate::type_checker::{EnumSchema, Name, StructSchema, TypeId};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
@@ -7,7 +7,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub enum SymbolTableEntry {
     /// Normal variables like parameters or let bindings
-    Variable { ty: Type },
+    Variable { ty: TypeId },
     /// Generic type variables that is meant to be solved. I.e. you call a generic function
     /// `<T>(T) -> T` with a concrete type `i32` and the type checker will solve
     /// the type variable `T = i32`.
@@ -76,11 +76,11 @@ impl SymbolTable {
 impl Debug for SymbolTable {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for scope in &self.scopes {
-            println!("---------------------");
+            writeln!(f, "---------------------")?;
             for (name, entry) in scope {
                 writeln!(f, "{}: {:?}", name, entry)?;
             }
-            println!("---------------------");
+            writeln!(f, "---------------------")?;
         }
 
         Ok(())

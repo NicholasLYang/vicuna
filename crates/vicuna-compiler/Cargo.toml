@@ -11,6 +11,7 @@ wasm-opt = false
 [dependencies]
 anyhow = { workspace = true }
 chumsky = { version = "0.9.2", default-features = false, features = ["std"] }
+id-arena = "2.2.1"
 miette = { version = "5.8.0", features = ["fancy"] }
 serde = { version = "1.0.147", features = ["derive", "rc"] }
 thiserror = "1.0.40"

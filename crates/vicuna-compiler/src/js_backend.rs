@@ -46,7 +46,7 @@ impl<T: Write> JsBackend<T> {
     fn emit_stmt(&mut self, stmt: &Span<Stmt>) -> Result<()> {
         match &stmt.0 {
             Stmt::Let(name, if_expr @ Span(Expr::If { .. } | Expr::Match { .. }, _)) => {
-                write!(self.output, "let {};\n", name.0)?;
+                writeln!(self.output, "let {};", name.0)?;
                 let old_expression_block_state = mem::replace(
                     &mut self.expression_block_state,
                     Some(ExprBlockState::Binding(name.0.clone())),
@@ -321,7 +321,7 @@ impl<T: Write> JsBackend<T> {
     fn emit_expr_fields(&mut self, fields: &ExprFields) -> Result<()> {
         match fields {
             ExprFields::Tuple(fields) => {
-                for (i, field) in fields.into_iter().enumerate() {
+                for (i, field) in fields.iter().enumerate() {
                     self.output.write_all(format!("{}: ", i).as_bytes())?;
                     self.emit_expr(field)?;
                     if i < fields.len() - 1 {
@@ -330,7 +330,7 @@ impl<T: Write> JsBackend<T> {
                 }
             }
             ExprFields::Named(fields) => {
-                for (i, (name, field)) in fields.into_iter().enumerate() {
+                for (i, (name, field)) in fields.iter().enumerate() {
                     self.output.write_all(name.0.as_bytes())?;
                     self.output.write_all(b": ")?;
                     self.emit_expr(field)?;
@@ -348,7 +348,7 @@ impl<T: Write> JsBackend<T> {
     fn emit_match_bindings(&mut self, bindings: &MatchBindings) -> Result<()> {
         match bindings {
             MatchBindings::Tuple(fields) => {
-                for (idx, field) in fields.into_iter().enumerate() {
+                for (idx, field) in fields.iter().enumerate() {
                     self.output.write_all(b"const ")?;
                     self.output.write_all(field.0.as_bytes())?;
                     self.output.write_all(b" = __match__[")?;
@@ -358,7 +358,7 @@ impl<T: Write> JsBackend<T> {
             }
             MatchBindings::Named(fields) => {
                 for (field, rename) in fields {
-                    let name = rename.as_ref().unwrap_or(&field);
+                    let name = rename.as_ref().unwrap_or(field);
 
                     self.output.write_all(b"const ")?;
                     self.output.write_all(name.0.as_bytes())?;
@@ -380,7 +380,7 @@ impl<T: Write> JsBackend<T> {
             // If the end expression is an if expression, we don't bind or return,
             // and let the if expression determine that itself.
             Some(if_expr @ Span(Expr::If { .. }, _)) => {
-                self.emit_expr(&if_expr)?;
+                self.emit_expr(if_expr)?;
             }
             Some(end_expr) => {
                 let expr_block_state = self
