@@ -104,5 +104,5 @@ substitutions.
 - Add type checker output printing/playground
 - Figure out how tuple enums work (should we bite the bullet and use type checker information?)
   - Or define functions that produce an enum representation? 
+  - Ended up defining functions
   
-
