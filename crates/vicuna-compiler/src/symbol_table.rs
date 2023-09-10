@@ -1,4 +1,4 @@
-use crate::type_checker::{EnumSchema, Name, StructSchema, TypeId};
+use crate::type_checker::{EnumSchema, Name, StructSchemaId, TypeId};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
@@ -19,7 +19,7 @@ pub enum SymbolTableEntry {
     /// generic function `<T>(T) -> T` and are type checking the function's body.
     AbstractTypeVariable,
     /// Structs
-    Struct { schema: Arc<StructSchema> },
+    Struct { schema_id: StructSchemaId },
     /// Enums
     Enum { schema: Arc<EnumSchema> },
 }
