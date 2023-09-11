@@ -23,7 +23,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::{fmt, mem};
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, instrument};
 
 // TODO: Intern strings
 pub type Name = String;
@@ -300,6 +300,12 @@ pub struct TypeChecker {
     void_ty: TypeId,
     string_ty: TypeId,
     js_ty: TypeId,
+}
+
+impl Debug for TypeChecker {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TypeChecker").finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Diagnostic, Error)]
@@ -1413,6 +1419,7 @@ impl TypeChecker {
         }
     }
 
+    #[instrument]
     fn instantiate_type_variable(
         &mut self,
         type_var_name: &str,
@@ -1430,7 +1437,8 @@ impl TypeChecker {
         };
 
         if let Some(instantiated_ty) = &self.type_variables[*idx] {
-            if &expr_ty != instantiated_ty {
+            if &self.types[expr_ty] != &self.types[*instantiated_ty] {
+                println!("2");
                 self.errors.push(TypeError::TypeMismatch {
                     expected_ty: self.p(*instantiated_ty).to_string(),
                     received_ty: self.p(expr_ty).to_string(),
@@ -1442,6 +1450,7 @@ impl TypeChecker {
         }
     }
 
+    #[instrument]
     fn compare_tuple_fields(
         &mut self,
         tuple_entries: &[Span<Expr>],
@@ -1463,6 +1472,7 @@ impl TypeChecker {
                 let name = name.clone();
                 self.instantiate_type_variable(&name, expr_ty, entry.1.clone());
             } else if expr_ty != *expected_ty {
+                println!("3");
                 self.errors.push(TypeError::TypeMismatch {
                     expected_ty: self.p(*expected_ty).to_string(),
                     received_ty: self.p(expr_ty).to_string(),
@@ -1499,6 +1509,7 @@ impl TypeChecker {
         Some(type_arguments)
     }
 
+    #[instrument]
     fn unify(&mut self, t1: TypeId, t2: TypeId, span: Range<usize>) {
         match (&self.types[t1], &self.types[t2]) {
             (Type::Variable(name), _) => {
@@ -1520,6 +1531,7 @@ impl TypeChecker {
                 },
             ) => {
                 if schema_id1 != schema_id2 {
+                    println!("4");
                     self.errors.push(TypeError::TypeMismatch {
                         expected_ty: self.p(t1).to_string(),
                         received_ty: self.p(t2).to_string(),
@@ -1537,6 +1549,7 @@ impl TypeChecker {
             }
             (_, _) => {
                 if t1 != t2 {
+                    println!("1");
                     self.errors.push(TypeError::TypeMismatch {
                         expected_ty: self.p(t1).to_string(),
                         received_ty: self.p(t2).to_string(),
