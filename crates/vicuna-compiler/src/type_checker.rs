@@ -1438,7 +1438,6 @@ impl TypeChecker {
 
         if let Some(instantiated_ty) = &self.type_variables[*idx] {
             if &self.types[expr_ty] != &self.types[*instantiated_ty] {
-                println!("2");
                 self.errors.push(TypeError::TypeMismatch {
                     expected_ty: self.p(*instantiated_ty).to_string(),
                     received_ty: self.p(expr_ty).to_string(),
@@ -1472,7 +1471,6 @@ impl TypeChecker {
                 let name = name.clone();
                 self.instantiate_type_variable(&name, expr_ty, entry.1.clone());
             } else if expr_ty != *expected_ty {
-                println!("3");
                 self.errors.push(TypeError::TypeMismatch {
                     expected_ty: self.p(*expected_ty).to_string(),
                     received_ty: self.p(expr_ty).to_string(),
@@ -1531,7 +1529,6 @@ impl TypeChecker {
                 },
             ) => {
                 if schema_id1 != schema_id2 {
-                    println!("4");
                     self.errors.push(TypeError::TypeMismatch {
                         expected_ty: self.p(t1).to_string(),
                         received_ty: self.p(t2).to_string(),
@@ -1549,7 +1546,6 @@ impl TypeChecker {
             }
             (_, _) => {
                 if t1 != t2 {
-                    println!("1");
                     self.errors.push(TypeError::TypeMismatch {
                         expected_ty: self.p(t1).to_string(),
                         received_ty: self.p(t2).to_string(),
