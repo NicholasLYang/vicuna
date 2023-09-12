@@ -1,7 +1,6 @@
-use crate::type_checker::{EnumSchema, Name, StructSchemaId, TypeId};
+use crate::type_checker::{EnumSchemaId, Name, StructSchemaId, TypeId};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
 
 /// We have multiple symbols that need to be tracked and scoped accordingly.
 #[derive(Debug, Clone)]
@@ -21,7 +20,7 @@ pub enum SymbolTableEntry {
     /// Structs
     Struct { schema_id: StructSchemaId },
     /// Enums
-    Enum { schema: Arc<EnumSchema> },
+    Enum { schema_id: EnumSchemaId },
 }
 
 pub struct SymbolTable {

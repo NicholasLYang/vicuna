@@ -1,0 +1,10 @@
+enum BinaryOp {
+  Add,
+  Sub,
+  Mul
+}
+
+enum Expr {
+  Binary(Expr, Expr, BinaryOp),
+  Number(i32)
+}
