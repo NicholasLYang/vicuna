@@ -12,22 +12,26 @@
 //!
 use crate::ast::{
     BinaryOp, Expr, ExprBlock, ExprFields, Fields, Function, ImportType, MatchBindings, PostFix,
-    Program, Span, Stmt, TypeDeclaration, TypeFields, TypeParams, TypeSig, UnaryOp, Value,
+    Program, Span, Stmt, TypeDeclaration, TypeFields, TypeSig, UnaryOp, Value,
 };
+use crate::symbol_table::{SymbolTable, SymbolTableEntry};
+use id_arena::{Arena, Id};
 use miette::Diagnostic;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
-use std::mem;
 use std::ops::Range;
 use std::sync::Arc;
+use std::{fmt, mem};
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, instrument};
 
 // TODO: Intern strings
-type Name = String;
+pub type Name = String;
 
-#[derive(Clone, PartialEq, Serialize)]
+pub type TypeId = Id<Type>;
+pub type StructSchemaId = Id<StructSchema>;
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     I32,
     F32,
@@ -38,11 +42,11 @@ pub enum Type {
     Variable(Name),
     /// A type for JS values
     Js,
-    Array(Box<Type>),
+    Array(Box<TypeId>),
     Function {
         type_parameters: Vec<Name>,
-        param_types: Vec<Type>,
-        return_type: Box<Type>,
+        param_types: Vec<TypeId>,
+        return_type: Box<TypeId>,
     },
     Struct {
         // Structs can be thought of as an instantiation of a schema,
@@ -56,44 +60,82 @@ pub enum Type {
         // ```
         //
         // Box<i32> is a struct, but Box<T> is a schema.
-        schema: Arc<StructSchema>,
-        type_arguments: Vec<Type>,
+        schema_id: StructSchemaId,
+        type_arguments: Vec<TypeId>,
     },
     Enum {
         schema: Arc<EnumSchema>,
-        type_arguments: Vec<Type>,
+        type_arguments: Vec<TypeId>,
     },
 }
 
-#[derive(Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InferredType {
-    Known(Type),
+    Known(TypeId),
     Unknown,
 }
 
-impl Debug for InferredType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl DisplayWithArena<'_> for InferredType {
+    fn fmt_with_arena(
+        &self,
+        f: &mut Formatter<'_>,
+        types: &Arena<Type>,
+        struct_schemas: &Arena<StructSchema>,
+    ) -> fmt::Result {
         match self {
-            InferredType::Known(ty) => write!(f, "{}", ty),
+            InferredType::Known(ty) => ty.fmt_with_arena(f, types, struct_schemas),
             InferredType::Unknown => write!(f, "<unknown type>"),
         }
     }
 }
 
 impl Display for Type {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
-impl Display for FieldsSchema {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+// A hack to get Display working on arena allocated values
+struct WithArena<'a, T: DisplayWithArena<'a>> {
+    value: T,
+    types: &'a Arena<Type>,
+    struct_schemas: &'a Arena<StructSchema>,
+}
+
+impl<T: for<'a> DisplayWithArena<'a>> Display for WithArena<'_, T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.value
+            .fmt_with_arena(f, self.types, self.struct_schemas)
     }
 }
 
-impl Debug for FieldsSchema {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+trait DisplayWithArena<'a> {
+    fn fmt_with_arena(
+        &self,
+        f: &mut Formatter<'a>,
+        types: &Arena<Type>,
+        struct_schemas: &Arena<StructSchema>,
+    ) -> fmt::Result;
+}
+
+impl DisplayWithArena<'_> for Id<Type> {
+    fn fmt_with_arena(
+        &self,
+        f: &mut Formatter<'_>,
+        types: &Arena<Type>,
+        struct_schemas: &Arena<StructSchema>,
+    ) -> fmt::Result {
+        types[*self].fmt_with_arena(f, types, struct_schemas)
+    }
+}
+
+impl DisplayWithArena<'_> for FieldsSchema {
+    fn fmt_with_arena(
+        &self,
+        f: &mut Formatter<'_>,
+        types: &Arena<Type>,
+        struct_schemas: &Arena<StructSchema>,
+    ) -> fmt::Result {
         match self {
             FieldsSchema::Named(fields) => {
                 write!(f, "{{ ")?;
@@ -101,7 +143,8 @@ impl Debug for FieldsSchema {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}: {}", name, ty)?;
+                    write!(f, "{}: ", name)?;
+                    ty.fmt_with_arena(f, types, struct_schemas)?;
                 }
                 write!(f, " }}")
             }
@@ -111,7 +154,7 @@ impl Debug for FieldsSchema {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", ty)?;
+                    ty.fmt_with_arena(f, types, struct_schemas)?;
                 }
                 write!(f, ")")
             }
@@ -120,8 +163,13 @@ impl Debug for FieldsSchema {
     }
 }
 
-impl Debug for Type {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl DisplayWithArena<'_> for Type {
+    fn fmt_with_arena(
+        &self,
+        f: &mut Formatter<'_>,
+        types: &Arena<Type>,
+        struct_schemas: &Arena<StructSchema>,
+    ) -> fmt::Result {
         match self {
             Type::I32 => write!(f, "i32"),
             Type::F32 => write!(f, "f32"),
@@ -130,7 +178,7 @@ impl Debug for Type {
             Type::String => write!(f, "string"),
             Type::Js => write!(f, "<js value>"),
             Type::Variable(name) => write!(f, "{}", name),
-            Type::Array(ty) => write!(f, "{}[]", ty),
+            Type::Array(ty) => write!(f, "{}[]", types[**ty]),
             Type::Function {
                 param_types,
                 return_type,
@@ -151,25 +199,26 @@ impl Debug for Type {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", param_type)?;
+                    write!(f, "{}", types[*param_type])?;
                 }
-                write!(f, ") -> {}", return_type)
+                write!(f, ") -> {}", types[**return_type])
             }
             Type::Struct {
-                schema,
+                schema_id: schema,
                 type_arguments,
             } => {
+                let schema = &struct_schemas[*schema];
                 write!(f, "struct {}<", schema.name)?;
                 for (i, type_argument) in type_arguments.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", type_argument)?;
+                    types[*type_argument].fmt_with_arena(f, types, struct_schemas)?;
                 }
                 write!(f, ">")?;
 
                 write!(f, " {{ ")?;
-                write!(f, "{}", schema.fields)?;
+                schema.fields.fmt_with_arena(f, types, struct_schemas)?;
                 write!(f, " }}")
             }
             Type::Enum {
@@ -181,7 +230,7 @@ impl Debug for Type {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", type_argument)?;
+                    write!(f, "{}", &types[*type_argument])?;
                 }
                 write!(f, ">")?;
 
@@ -198,60 +247,10 @@ impl Debug for Type {
     }
 }
 
-#[derive(Debug)]
-struct SymbolTable<T> {
-    scopes: Vec<HashMap<Name, T>>,
-    current_scope: usize,
-}
-
-impl<T> SymbolTable<T> {
-    fn new() -> Self {
-        Self {
-            scopes: vec![HashMap::new()],
-            current_scope: 0,
-        }
-    }
-
-    fn enter_scope(&mut self) {
-        self.current_scope += 1;
-        self.scopes.push(HashMap::new());
-    }
-
-    fn exit_scope(&mut self) {
-        self.current_scope -= 1;
-        self.scopes.pop();
-    }
-
-    fn insert(&mut self, name: Name, value: T) {
-        self.scopes[self.current_scope].insert(name, value);
-    }
-
-    fn lookup(&self, name: impl AsRef<str>) -> Option<&T> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(name.as_ref()) {
-                return Some(ty);
-            }
-        }
-
-        None
-    }
-
-    #[allow(dead_code)]
-    fn lookup_mut(&mut self, name: &Name) -> Option<&mut T> {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(ty) = scope.get_mut(name) {
-                return Some(ty);
-            }
-        }
-
-        None
-    }
-}
-
-#[derive(Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FieldsSchema {
-    Tuple(Vec<Type>),
-    Named(HashMap<Name, Type>),
+    Tuple(Vec<TypeId>),
+    Named(HashMap<Name, TypeId>),
     Empty,
 }
 
@@ -273,7 +272,7 @@ impl FieldsSchema {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StructSchema {
     name: Name,
     fields: FieldsSchema,
@@ -281,43 +280,41 @@ pub struct StructSchema {
     type_parameters: Vec<Name>,
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, PartialEq)]
 pub struct EnumSchema {
     name: Name,
-    variants: HashMap<Name, Arc<StructSchema>>,
+    variants: HashMap<Name, StructSchemaId>,
     type_parameters: Vec<Name>,
 }
 
-/// We have multiple symbols that need to be tracked and scoped accordingly.
-#[derive(Debug, Clone)]
-enum SymbolTableEntry {
-    /// Normal variables like parameters or let bindings
-    Variable { ty: Type },
-    /// Generic type variables like struct Foo<T>
-    TypeVariable {
-        /// Index into the `type_variables` vector
-        idx: usize,
-    },
-    /// Structs
-    Struct { schema: Arc<StructSchema> },
-    /// Enums
-    Enum { schema: Arc<EnumSchema> },
-}
-
 pub struct TypeChecker {
-    symbol_table: SymbolTable<SymbolTableEntry>,
-    type_variables: Vec<Option<Type>>,
-    return_type: Option<Type>,
+    symbol_table: SymbolTable,
+    type_variables: Vec<Option<TypeId>>,
+    types: Arena<Type>,
+    struct_schemas: Arena<StructSchema>,
+    return_type: Option<TypeId>,
     pub(crate) errors: Vec<TypeError>,
+    i32_ty: TypeId,
+    f32_ty: TypeId,
+    bool_ty: TypeId,
+    void_ty: TypeId,
+    string_ty: TypeId,
+    js_ty: TypeId,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Diagnostic, Error)]
+impl Debug for TypeChecker {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TypeChecker").finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Diagnostic, Error)]
 pub enum TypeError {
     #[error("Type mismatch: expected {expected_ty}, got {received_ty}")]
     #[diagnostic(code(type_error::type_mismatch))]
     TypeMismatch {
-        expected_ty: Type,
-        received_ty: Type,
+        expected_ty: String,
+        received_ty: String,
         #[label]
         span: Range<usize>,
     },
@@ -386,11 +383,36 @@ pub enum TypeError {
 
 impl TypeChecker {
     pub fn new() -> Self {
+        let mut type_arena = Arena::new();
+        let i32_ty = type_arena.alloc(Type::I32);
+        let f32_ty = type_arena.alloc(Type::F32);
+        let bool_ty = type_arena.alloc(Type::Bool);
+        let void_ty = type_arena.alloc(Type::Void);
+        let string_ty = type_arena.alloc(Type::String);
+        let js_ty = type_arena.alloc(Type::Js);
+
         Self {
             symbol_table: SymbolTable::new(),
             type_variables: Vec::new(),
+            types: type_arena,
+            struct_schemas: Arena::new(),
             return_type: None,
             errors: Vec::new(),
+            i32_ty,
+            f32_ty,
+            bool_ty,
+            void_ty,
+            string_ty,
+            js_ty,
+        }
+    }
+
+    // Shorthand for creating a WithArena
+    fn p<'a, T: DisplayWithArena<'a>>(&'a self, value: T) -> WithArena<'a, T> {
+        WithArena {
+            value,
+            types: &self.types,
+            struct_schemas: &self.struct_schemas,
         }
     }
 
@@ -402,52 +424,67 @@ impl TypeChecker {
         self.symbol_table.exit_scope();
     }
 
+    #[allow(dead_code)]
+    fn print_checker_state(&self) {
+        println!("symbol table:");
+        println!("{:?}", self.symbol_table);
+        println!("type variables:");
+        println!("{:?}", self.type_variables);
+        println!("return type:");
+        if let Some(ty) = &self.return_type {
+            println!("{:?}", ty);
+        } else {
+            println!("None");
+        }
+        println!("errors:");
+        println!("{:?}", self.errors);
+    }
+
     pub fn check(mut self, program: &Program) -> Vec<TypeError> {
         debug!("checking program");
         self.check_block(&program.statements);
-
         self.errors
     }
 
-    fn add_type_parameters(&mut self, type_parameters: &Option<TypeParams>) {
-        if let Some(params) = type_parameters {
-            for param in &params.0 {
-                self.type_variables.push(None);
-                let idx = self.type_variables.len() - 1;
-                self.symbol_table
-                    .insert(param.0.clone(), SymbolTableEntry::TypeVariable { idx })
-            }
+    fn add_type_parameters(&mut self, type_parameters: &[String]) {
+        for param in type_parameters {
+            self.type_variables.push(None);
+            let idx = self.type_variables.len() - 1;
+            self.symbol_table
+                .insert(param.clone(), SymbolTableEntry::TypeVariable { idx })
         }
     }
 
-    fn check_type_sig(&mut self, type_sig: &Span<TypeSig>) -> Option<Type> {
+    fn check_type_sig(&mut self, type_sig: &Span<TypeSig>) -> Option<TypeId> {
         match &type_sig.0 {
-            TypeSig::I32 => Some(Type::I32),
-            TypeSig::F32 => Some(Type::F32),
-            TypeSig::Bool => Some(Type::Bool),
-            TypeSig::String => Some(Type::String),
+            TypeSig::I32 => Some(self.i32_ty),
+            TypeSig::F32 => Some(self.f32_ty),
+            TypeSig::Bool => Some(self.bool_ty),
+            TypeSig::String => Some(self.string_ty),
             TypeSig::Named(name, type_args) => match self.symbol_table.lookup(&name.0) {
-                Some(SymbolTableEntry::Struct { schema })
-                    if schema.type_parameters.len() == type_args.len() =>
+                Some(SymbolTableEntry::Struct { schema_id })
+                    if self.struct_schemas[*schema_id].type_parameters.len() == type_args.len() =>
                 {
-                    Some(Type::Struct {
-                        schema: schema.clone(),
+                    let ty = Type::Struct {
+                        schema_id: *schema_id,
                         type_arguments: type_args
                             .iter()
                             .map(|type_sig| self.check_type_sig(type_sig))
                             .collect::<Option<Vec<_>>>()?,
-                    })
+                    };
+                    Some(self.types.alloc(ty))
                 }
                 Some(SymbolTableEntry::Enum { schema })
                     if schema.type_parameters.len() == type_args.len() =>
                 {
-                    Some(Type::Enum {
+                    let ty = Type::Enum {
                         schema: schema.clone(),
                         type_arguments: type_args
                             .iter()
                             .map(|type_sig| self.check_type_sig(type_sig))
                             .collect::<Option<Vec<_>>>()?,
-                    })
+                    };
+                    Some(self.types.alloc(ty))
                 }
                 Some(SymbolTableEntry::Enum { schema }) => {
                     self.errors.push(TypeError::TypeArityMismatch {
@@ -457,19 +494,27 @@ impl TypeChecker {
 
                     None
                 }
-                Some(SymbolTableEntry::Struct { schema }) => {
+                Some(SymbolTableEntry::Struct { schema_id }) => {
                     self.errors.push(TypeError::TypeArityMismatch {
-                        expected: schema.type_parameters.len(),
+                        expected: self.struct_schemas[*schema_id].type_parameters.len(),
                         received: type_args.len(),
                     });
 
                     None
                 }
-                Some(SymbolTableEntry::TypeVariable { idx }) => Some(
-                    self.type_variables[*idx]
-                        .clone()
-                        .unwrap_or_else(|| Type::Variable(name.0.clone())),
-                ),
+                Some(SymbolTableEntry::TypeVariable { idx }) => {
+                    let ty = self
+                        .type_variables
+                        .get(*idx)
+                        .cloned()
+                        .flatten()
+                        .unwrap_or_else(|| self.types.alloc(Type::Variable(name.0.clone())));
+
+                    Some(ty)
+                }
+                Some(SymbolTableEntry::AbstractTypeVariable) => {
+                    Some(self.types.alloc(Type::Variable(name.0.clone())))
+                }
                 _ => {
                     self.errors
                         .push(TypeError::UndefinedType(name.0.clone(), type_sig.1.clone()));
@@ -480,6 +525,21 @@ impl TypeChecker {
         }
     }
 
+    /// Checks the fields of a type declaration and returns the schema for the fields if the check
+    /// succeeds. Requires the type id to be already allocated so we can do recursive types.
+    ///
+    /// # Arguments
+    ///
+    /// * `type_id`: The already allocated type id for the type we are checking.
+    /// * `fields`: The unchecked type fields.
+    ///
+    /// returns: Option<FieldsSchema>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
     fn add_type_fields(&mut self, fields: &TypeFields) -> Option<FieldsSchema> {
         match fields {
             TypeFields::Named(fields) => {
@@ -511,58 +571,65 @@ impl TypeChecker {
                 type_parameters,
                 fields,
             } => {
-                self.add_type_parameters(type_parameters);
-                let fields = self.add_type_fields(fields)?;
+                let type_parameters: Vec<Name> = type_parameters
+                    .as_ref()
+                    .map(|params| params.0.iter().map(|param| param.0.clone()).collect())
+                    .unwrap_or_default();
 
                 let schema = StructSchema {
                     name: name.0.clone(),
-                    fields,
-                    type_parameters: type_parameters
-                        .as_ref()
-                        .map(|params| params.0.iter().map(|param| param.0.clone()).collect())
-                        .unwrap_or_default(),
+                    fields: FieldsSchema::Empty,
+                    type_parameters: type_parameters.clone(),
                 };
 
-                self.symbol_table.insert(
-                    name.0.clone(),
-                    SymbolTableEntry::Struct {
-                        schema: Arc::new(schema),
-                    },
-                );
+                let schema_id = self.struct_schemas.alloc(schema);
+
+                self.symbol_table
+                    .insert(name.0.clone(), SymbolTableEntry::Struct { schema_id });
+
+                self.symbol_table.enter_scope();
+
+                for param in type_parameters {
+                    self.symbol_table
+                        .insert(param, SymbolTableEntry::AbstractTypeVariable);
+                }
+
+                let fields = self.add_type_fields(fields)?;
+
+                self.symbol_table.exit_scope();
+
+                self.struct_schemas[schema_id].fields = fields;
             }
             TypeDeclaration::Enum {
                 name,
                 type_parameters,
                 variants,
             } => {
-                self.add_type_parameters(type_parameters);
+                let type_parameters: Vec<_> = type_parameters
+                    .iter()
+                    .flat_map(|params| params.0.iter())
+                    .map(|param| param.0.clone())
+                    .collect();
+
+                self.add_type_parameters(&type_parameters);
 
                 let mut variants_map = HashMap::new();
                 for (variant_name, fields) in variants {
                     let fields = self.add_type_fields(fields)?;
 
-                    variants_map.insert(
-                        variant_name.0.clone(),
-                        Arc::new(StructSchema {
-                            name: variant_name.0.clone(),
-                            fields,
-                            type_parameters: type_parameters
-                                .as_ref()
-                                .map(|params| {
-                                    params.0.iter().map(|param| param.0.clone()).collect()
-                                })
-                                .unwrap_or_default(),
-                        }),
-                    );
+                    let variant_schema_id = self.struct_schemas.alloc(StructSchema {
+                        name: variant_name.0.clone(),
+                        fields,
+                        type_parameters: type_parameters.clone(),
+                    });
+
+                    variants_map.insert(variant_name.0.clone(), variant_schema_id);
                 }
 
                 let schema = Arc::new(EnumSchema {
                     name: name.0.clone(),
                     variants: variants_map,
-                    type_parameters: type_parameters
-                        .as_ref()
-                        .map(|params| params.0.iter().map(|param| param.0.clone()).collect())
-                        .unwrap_or_default(),
+                    type_parameters,
                 });
 
                 self.symbol_table
@@ -586,19 +653,23 @@ impl TypeChecker {
                 let return_type = if let Some(return_type) = return_type {
                     self.check_type_sig(return_type)?
                 } else {
-                    Type::Void
+                    self.void_ty
                 };
 
-                self.add_type_parameters(type_parameters);
+                // We enter a scope to add the type parameters;
+                self.enter_scope();
 
                 let type_parameters = type_parameters
                     .iter()
-                    .map(|p| &p.0)
-                    .flatten()
-                    .map(|param| param.0.clone())
+                    .flat_map(|p| &p.0)
+                    .map(|param| {
+                        self.symbol_table
+                            .insert(param.0.clone(), SymbolTableEntry::AbstractTypeVariable);
+                        param.0.clone()
+                    })
                     .collect::<Vec<_>>();
 
-                let ty = Type::Function {
+                let fn_ty = Type::Function {
                     param_types: params
                         .iter()
                         .map(|(_, ty)| self.check_type_sig(ty))
@@ -606,6 +677,12 @@ impl TypeChecker {
                     return_type: Box::new(return_type),
                     type_parameters,
                 };
+
+                let ty = self.types.alloc(fn_ty);
+
+                // Exit it to add the function definition;
+                self.exit_scope();
+
                 self.symbol_table
                     .insert(name.0.clone(), SymbolTableEntry::Variable { ty });
             }
@@ -630,28 +707,42 @@ impl TypeChecker {
             }
             Stmt::Function(Function {
                 name,
-                type_parameters,
+                type_parameters: _,
                 params,
                 body,
-                return_type,
+                return_type: _,
             }) => {
                 debug!("checking function {}", name.0);
                 self.enter_scope();
-                self.add_type_parameters(type_parameters);
 
-                for (name, type_sig) in params {
-                    let ty = self.check_type_sig(type_sig)?;
-                    self.symbol_table
-                        .insert(name.0.clone(), SymbolTableEntry::Variable { ty });
-                }
-
-                let return_type = if let Some(return_type) = &return_type {
-                    self.check_type_sig(return_type)?
-                } else {
-                    Type::Void
+                // The clone here is pretty expensive, so I should probably
+                // make it cheaper by interning types.
+                let Some(SymbolTableEntry::Variable { ty }) = self.symbol_table.lookup(&name.0).cloned() else {
+                    panic!("function should be defined in symbol table");
                 };
 
-                let old_return_type = mem::replace(&mut self.return_type, Some(return_type));
+                let Type::Function {
+                    type_parameters,
+                    param_types,
+                    return_type,
+                } = &self.types[ty] else {
+                    panic!("function should have function type");
+                };
+
+                for type_param in type_parameters {
+                    self.symbol_table
+                        .insert(type_param.clone(), SymbolTableEntry::AbstractTypeVariable);
+                }
+
+                for ((param_name, _), param_ty) in params.iter().zip(param_types.iter()) {
+                    self.symbol_table.insert(
+                        param_name.0.clone(),
+                        SymbolTableEntry::Variable { ty: *param_ty },
+                    );
+                }
+
+                let old_return_type =
+                    mem::replace(&mut self.return_type, Some(*return_type.clone()));
 
                 self.check_block(&body.0.stmts);
 
@@ -663,8 +754,8 @@ impl TypeChecker {
 
                     if end_expr_ty != return_type {
                         self.errors.push(TypeError::TypeMismatch {
-                            expected_ty: return_type,
-                            received_ty: end_expr_ty,
+                            expected_ty: self.p(return_type).to_string(),
+                            received_ty: self.p(end_expr_ty).to_string(),
                             span: body.0.end_expr.as_ref().unwrap().1.clone(),
                         });
                     }
@@ -678,10 +769,10 @@ impl TypeChecker {
                 else_block,
             } => {
                 let condition_ty = self.check_expr(condition)?;
-                if condition_ty != Type::Bool {
+                if condition_ty != self.bool_ty {
                     self.errors.push(TypeError::TypeMismatch {
-                        expected_ty: Type::Bool,
-                        received_ty: condition_ty,
+                        expected_ty: "bool".to_string(),
+                        received_ty: self.p(condition_ty).to_string(),
                         span: condition.1.clone(),
                     });
                 }
@@ -698,14 +789,14 @@ impl TypeChecker {
                 let ty = if let Some(expr) = expr {
                     self.check_expr(expr)?
                 } else {
-                    Type::Void
+                    self.void_ty
                 };
 
                 if let Some(return_type) = &self.return_type {
                     if ty != *return_type {
                         self.errors.push(TypeError::TypeMismatch {
-                            expected_ty: return_type.clone(),
-                            received_ty: ty,
+                            expected_ty: self.p(*return_type).to_string(),
+                            received_ty: self.p(ty).to_string(),
                             span: stmt.1.clone(),
                         });
                     }
@@ -723,13 +814,15 @@ impl TypeChecker {
                 if let Some(default_import) = default_import {
                     self.symbol_table.insert(
                         default_import.0.clone(),
-                        SymbolTableEntry::Variable { ty: Type::Js },
+                        SymbolTableEntry::Variable { ty: self.js_ty },
                     );
                 }
 
                 for name in named_imports {
-                    self.symbol_table
-                        .insert(name.0.clone(), SymbolTableEntry::Variable { ty: Type::Js });
+                    self.symbol_table.insert(
+                        name.0.clone(),
+                        SymbolTableEntry::Variable { ty: self.js_ty },
+                    );
                 }
             }
             Stmt::Type(decl) => {
@@ -746,7 +839,7 @@ impl TypeChecker {
                         self.symbol_table.insert(
                             variant_name.clone(),
                             SymbolTableEntry::Struct {
-                                schema: variant.clone(),
+                                schema_id: variant.clone(),
                             },
                         );
                     }
@@ -763,7 +856,7 @@ impl TypeChecker {
                     self.symbol_table.insert(
                         name.0.clone(),
                         SymbolTableEntry::Struct {
-                            schema: variant.clone(),
+                            schema_id: variant.clone(),
                         },
                     );
                 }
@@ -774,7 +867,7 @@ impl TypeChecker {
         Some(())
     }
 
-    fn check_expr(&mut self, expr: &Span<Expr>) -> Option<Type> {
+    fn check_expr(&mut self, expr: &Span<Expr>) -> Option<TypeId> {
         debug!("checking expr: {:?}", expr.0);
         match &expr.0 {
             Expr::Binary(op, lhs, rhs) => {
@@ -782,14 +875,14 @@ impl TypeChecker {
                 let rhs_ty = self.check_expr(rhs)?;
                 match op.0 {
                     BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide => {
-                        if lhs_ty == Type::I32 && rhs_ty == Type::I32 {
-                            Some(Type::I32)
-                        } else if lhs_ty == Type::F32 && rhs_ty == Type::F32 {
-                            Some(Type::F32)
+                        if lhs_ty == self.i32_ty && rhs_ty == self.i32_ty {
+                            Some(self.i32_ty)
+                        } else if lhs_ty == self.f32_ty && rhs_ty == self.f32_ty {
+                            Some(self.f32_ty)
                         } else {
                             self.errors.push(TypeError::TypeMismatch {
-                                expected_ty: lhs_ty,
-                                received_ty: rhs_ty,
+                                expected_ty: self.p(lhs_ty).to_string(),
+                                received_ty: self.p(rhs_ty).to_string(),
                                 span: rhs.1.clone(),
                             });
                             None
@@ -798,29 +891,29 @@ impl TypeChecker {
                     BinaryOp::Equal | BinaryOp::NotEqual => {
                         if lhs_ty != rhs_ty {
                             self.errors.push(TypeError::TypeMismatch {
-                                expected_ty: lhs_ty,
-                                received_ty: rhs_ty,
+                                expected_ty: self.p(lhs_ty).to_string(),
+                                received_ty: self.p(rhs_ty).to_string(),
                                 span: rhs.1.clone(),
                             });
                         }
 
-                        Some(Type::Bool)
+                        Some(self.bool_ty)
                     }
                     BinaryOp::GreaterThan
                     | BinaryOp::GreaterThanOrEqual
                     | BinaryOp::LessThan
                     | BinaryOp::LessThanOrEqual => {
-                        let is_number = (lhs_ty == Type::I32 && rhs_ty == Type::I32)
-                            || (lhs_ty == Type::F32 && rhs_ty == Type::F32);
+                        let is_number = (lhs_ty == self.i32_ty && rhs_ty == self.i32_ty)
+                            || (lhs_ty == self.f32_ty && rhs_ty == self.f32_ty);
                         if !is_number {
                             self.errors.push(TypeError::TypeMismatch {
-                                expected_ty: lhs_ty,
-                                received_ty: rhs_ty,
+                                expected_ty: self.p(lhs_ty).to_string(),
+                                received_ty: self.p(rhs_ty).to_string(),
                                 span: rhs.1.clone(),
                             });
                         }
 
-                        Some(Type::Bool)
+                        Some(self.bool_ty)
                     }
                 }
             }
@@ -828,38 +921,38 @@ impl TypeChecker {
                 let rhs_ty = self.check_expr(rhs)?;
                 match op.0 {
                     UnaryOp::Not => {
-                        if rhs_ty != Type::Bool {
+                        if rhs_ty != self.bool_ty {
                             self.errors.push(TypeError::TypeMismatch {
-                                expected_ty: Type::Bool,
-                                received_ty: rhs_ty,
+                                expected_ty: "bool".to_string(),
+                                received_ty: self.p(rhs_ty).to_string(),
                                 span: expr.1.clone(),
                             });
                         }
 
-                        Some(Type::Bool)
+                        Some(self.bool_ty)
                     }
                     UnaryOp::Negate => {
-                        if rhs_ty != Type::I32 {
+                        if rhs_ty != self.i32_ty {
                             self.errors.push(TypeError::TypeMismatch {
-                                expected_ty: Type::I32,
-                                received_ty: rhs_ty,
+                                expected_ty: "i32".to_string(),
+                                received_ty: self.p(rhs_ty).to_string(),
                                 span: expr.1.clone(),
                             });
                         }
 
-                        Some(Type::I32)
+                        Some(self.i32_ty)
                     }
                 }
             }
             Expr::Value(value) => match value {
-                Value::I32(_) => Some(Type::I32),
-                Value::Bool(_) => Some(Type::Bool),
-                Value::String(_) => Some(Type::String),
-                Value::F32(_) => Some(Type::F32),
+                Value::I32(_) => Some(self.i32_ty),
+                Value::Bool(_) => Some(self.bool_ty),
+                Value::String(_) => Some(self.string_ty),
+                Value::F32(_) => Some(self.f32_ty),
             },
             Expr::Variable(name) => {
                 if let Some(SymbolTableEntry::Variable { ty }) = self.symbol_table.lookup(name) {
-                    Some(ty.clone())
+                    Some(*ty)
                 } else {
                     self.errors
                         .push(TypeError::UndefinedVariable(name.clone(), expr.1.clone()));
@@ -868,36 +961,44 @@ impl TypeChecker {
             }
             Expr::PostFix(callee, Span(PostFix::Args(args), args_span)) => {
                 if let Expr::Variable(name) = &callee.0 {
-                    if let Some(SymbolTableEntry::Struct { schema }) =
+                    if let Some(SymbolTableEntry::Struct { schema_id }) =
                         self.symbol_table.lookup(name).cloned()
                     {
+                        // TODO: Avoid this expensive clone.
+                        let schema = self.struct_schemas[schema_id].clone();
+
                         if let FieldsSchema::Tuple(schema_fields) = &schema.fields {
+                            self.add_type_parameters(&schema.type_parameters);
+
                             self.compare_tuple_fields(args, schema_fields, args_span.clone())?;
                             let type_arguments =
                                 self.get_type_arguments(&schema, expr.1.clone())?;
 
-                            return Some(Type::Struct {
-                                schema: schema.clone(),
+                            return Some(self.types.alloc(Type::Struct {
+                                schema_id,
                                 type_arguments,
-                            });
+                            }));
                         }
                     }
                     if name == "print" {
                         for arg in args {
                             self.check_expr(arg)?;
                         }
-                        return Some(Type::Void);
+                        return Some(self.void_ty);
                     }
                 }
 
                 let callee_ty = self.check_expr(callee)?;
+                // TODO: Avoid this expensive clone.
+                let callee_ty = &self.types[callee_ty].clone();
+
                 let Type::Function {
                     param_types,
                     return_type,
-                    ..
+                    type_parameters
                 } = callee_ty else {
                     self.errors
-                        .push(TypeError::NotCallable(callee_ty, callee.1.clone()));
+                        .push(TypeError::NotCallable(callee_ty.clone(), callee.1.clone()));
                     return None;
                 };
 
@@ -909,42 +1010,55 @@ impl TypeChecker {
                     ));
                 }
 
-                // Any generic substitution that we may need to apply to the return type;
+                self.add_type_parameters(type_parameters);
 
                 for (arg, param_type) in args.iter().zip(param_types) {
                     let arg_ty = self.check_expr(arg)?;
-                    if let Type::Variable(name) = param_type {
+                    if let Type::Variable(name) = &self.types[*param_type] {
                         let entry = self
                             .symbol_table
-                            .lookup(&name)
+                            .lookup(name)
                             .expect("variable not in symbol table");
-                        // TODO: This isn't quite right because it doesn't account for
-                        //       type variables that are shadowed.
+
                         if let SymbolTableEntry::TypeVariable { idx } = entry {
-                            self.type_variables[*idx] = Some(arg_ty.clone());
+                            if let Some(existing_ty) = &self.type_variables[*idx] {
+                                if existing_ty != &arg_ty {
+                                    self.errors.push(TypeError::TypeMismatch {
+                                        expected_ty: self.p(*existing_ty).to_string(),
+                                        received_ty: self.p(arg_ty).to_string(),
+                                        span: arg.1.clone(),
+                                    });
+                                }
+                            } else {
+                                self.type_variables[*idx] = Some(arg_ty);
+                            }
                         }
-                    } else if arg_ty != param_type {
+                    } else if arg_ty != *param_type {
                         self.errors.push(TypeError::TypeMismatch {
-                            expected_ty: param_type.clone(),
-                            received_ty: arg_ty.clone(),
+                            expected_ty: self.p(*param_type).to_string(),
+                            received_ty: self.p(arg_ty).to_string(),
                             span: arg.1.clone(),
                         });
                     }
                 }
 
-                Some(self.apply_substitutions(*return_type))
+                Some(self.apply_substitutions(**return_type))
             }
             Expr::PostFix(callee, Span(PostFix::Field(field), field_span)) => {
                 let callee_ty = self.check_expr(callee)?;
+                let callee_ty = &self.types[callee_ty];
                 debug!("callee type: {:?}", callee);
                 let Type::Struct {
-                    schema,
+                    schema_id,
                     type_arguments,
                 } = callee_ty else {
                     self.errors
-                        .push(TypeError::NotStruct(callee_ty, callee.1.clone()));
+                        .push(TypeError::NotStruct(callee_ty.clone(), callee.1.clone()));
                     return None;
                 };
+
+                let schema = &self.struct_schemas[*schema_id];
+
                 let field_type = match &schema.fields {
                     FieldsSchema::Tuple(_) => {
                         // Unclear what I should do here. I could allow for number fields,
@@ -959,60 +1073,67 @@ impl TypeChecker {
                     FieldsSchema::Empty => None,
                 };
 
-                match field_type {
-                    Some(Type::Variable(var_name)) => {
-                        let idx = schema
-                            .type_parameters
-                            .iter()
-                            .position(|name| name == var_name)
-                            .expect("type var should be in type parameters");
+                let Some(field_type) = field_type else {
+                    self.errors.push(TypeError::UndefinedField {
+                        struct_name: schema.name.clone(),
+                        field_name: field.0.clone(),
+                        span: field_span.clone(),
+                    });
 
-                        Some(type_arguments[idx].clone())
-                    }
-                    Some(ty) => Some(ty.clone()),
-                    None => {
-                        self.errors.push(TypeError::UndefinedField {
-                            struct_name: schema.name.clone(),
-                            field_name: field.0.clone(),
-                            span: field_span.clone(),
-                        });
+                    return None
+                };
 
-                        None
-                    }
+                if let Type::Variable(var_name) = &self.types[*field_type] {
+                    let idx = schema
+                        .type_parameters
+                        .iter()
+                        .position(|name| name == var_name)
+                        .expect("type var should be in type parameters");
+
+                    Some(type_arguments[idx])
+                } else {
+                    Some(*field_type)
                 }
             }
             Expr::PostFix(callee, Span(PostFix::Index(index), _)) => {
                 let callee_ty = self.check_expr(callee)?;
                 let index_ty = self.check_expr(index)?;
-                if index_ty != Type::I32 {
+
+                let callee_ty = &self.types[callee_ty];
+
+                if index_ty != self.i32_ty {
                     self.errors.push(TypeError::TypeMismatch {
-                        expected_ty: Type::I32,
-                        received_ty: index_ty,
+                        expected_ty: "i32".to_string(),
+                        received_ty: self.p(index_ty).to_string(),
                         span: index.1.clone(),
                     });
                 }
 
                 if let Type::Array(ty) = callee_ty {
-                    Some(*ty)
+                    Some(**ty)
                 } else {
                     self.errors
-                        .push(TypeError::NotArray(callee_ty, callee.1.clone()));
+                        .push(TypeError::NotArray(callee_ty.clone(), callee.1.clone()));
                     None
                 }
             }
             Expr::Struct(name, literal_fields) => {
-                let Some(SymbolTableEntry::Struct { schema }) = self.symbol_table.lookup(&name.0).cloned() else {
+                let Some(SymbolTableEntry::Struct { schema_id }) = self.symbol_table.lookup(&name.0).cloned() else {
                     self.errors.push(TypeError::UndefinedType(name.0.clone(), expr.1.clone()));
                     return None;
                 };
 
-                let type_arguments =
-                    self.check_fields(&name.0, expr.1.clone(), literal_fields, &schema)?;
+                // TODO: Avoid this clone.
+                let schema = self.struct_schemas[schema_id].clone();
+                self.add_type_parameters(&schema.type_parameters);
 
-                Some(Type::Struct {
-                    schema: schema.clone(),
+                let type_arguments =
+                    self.check_fields(&name.0, expr.1.clone(), literal_fields, schema_id)?;
+
+                Some(self.types.alloc(Type::Struct {
+                    schema_id,
                     type_arguments,
-                })
+                }))
             }
             Expr::Enum {
                 enum_name,
@@ -1024,7 +1145,9 @@ impl TypeChecker {
                     return None;
                 };
 
-                let Some(variant_fields) = schema.variants.get(&variant_name.0) else {
+                self.add_type_parameters(&schema.type_parameters);
+
+                let Some(variant_schema_id) = schema.variants.get(&variant_name.0) else {
                     self.errors.push(TypeError::UndefinedVariant {
                         enum_name: enum_name.0.clone(),
                         variant_name: variant_name.0.clone(),
@@ -1034,12 +1157,12 @@ impl TypeChecker {
                 };
 
                 let type_arguments =
-                    self.check_fields(&variant_name.0, expr.1.clone(), fields, &variant_fields)?;
+                    self.check_fields(&variant_name.0, expr.1.clone(), fields, *variant_schema_id)?;
 
-                Some(Type::Enum {
+                Some(self.types.alloc(Type::Enum {
                     schema: schema.clone(),
                     type_arguments,
-                })
+                }))
             }
             Expr::If {
                 condition,
@@ -1047,10 +1170,10 @@ impl TypeChecker {
                 else_block,
             } => {
                 let condition_ty = self.check_expr(condition)?;
-                if condition_ty != Type::Bool {
+                if condition_ty != self.bool_ty {
                     self.errors.push(TypeError::TypeMismatch {
-                        expected_ty: Type::Bool,
-                        received_ty: condition_ty,
+                        expected_ty: "bool".to_string(),
+                        received_ty: self.p(condition_ty).to_string(),
                         span: condition.1.clone(),
                     });
                 }
@@ -1060,8 +1183,8 @@ impl TypeChecker {
 
                 if then_ty != else_ty {
                     self.errors.push(TypeError::TypeMismatch {
-                        expected_ty: then_ty.clone(),
-                        received_ty: else_ty.clone(),
+                        expected_ty: self.p(then_ty).to_string(),
+                        received_ty: self.p(else_ty).to_string(),
                         span: expr.1.clone(),
                     });
                 }
@@ -1071,17 +1194,19 @@ impl TypeChecker {
             Expr::Match { expr, cases } => {
                 let expr_ty = self.check_expr(expr)?;
                 // TODO: Handle non-enum pattern matching
-                let Type::Enum { schema, .. } = expr_ty else {
-                    self.errors.push(TypeError::NotEnum(expr_ty.to_string(), expr.1.clone()));
+                let Type::Enum { schema, .. } = &self.types[expr_ty] else {
+                    self.errors.push(TypeError::NotEnum(self.p(expr_ty).to_string(), expr.1.clone()));
                     return None;
                 };
+
+                let schema = schema.clone();
 
                 let enum_name = &schema.name;
                 // Type of each case block must be the same
                 let mut case_type = None;
 
                 for (case, block) in cases {
-                    let Some(variant_schema) = schema.variants.get(&case.0.variant_name.0).cloned() else {
+                    let Some(variant_schema_id) = schema.variants.get(&case.0.variant_name.0).cloned() else {
                         self.errors.push(TypeError::UndefinedVariant {
                             enum_name: schema.name.clone(),
                             variant_name: case.0.variant_name.0.clone(),
@@ -1089,6 +1214,8 @@ impl TypeChecker {
                         });
                         return None;
                     };
+
+                    let variant_schema = &self.struct_schemas[variant_schema_id];
 
                     let Some(received_fields) = &case.0.fields else {
                         if !variant_schema.fields.is_empty() {
@@ -1106,13 +1233,13 @@ impl TypeChecker {
                         let received_fields = match received_fields {
                             MatchBindings::Tuple(fields) => Fields::Tuple(
                                 fields
-                                    .into_iter()
+                                    .iter()
                                     .map(|field| Span(InferredType::Unknown, field.1.clone()))
                                     .collect(),
                             ),
                             MatchBindings::Named(fields) => Fields::Named(
                                 fields
-                                    .into_iter()
+                                    .iter()
                                     .map(|(name, _)| {
                                         (name.clone(), Span(InferredType::Unknown, name.1.clone()))
                                     })
@@ -1146,12 +1273,12 @@ impl TypeChecker {
                                 return None;
                             };
 
-                            for (idx, field) in fields.into_iter().enumerate() {
+                            for (idx, field) in fields.iter().enumerate() {
                                 if let Some(expected_field_ty) = expected_fields.get(idx) {
                                     self.symbol_table.insert(
                                         field.0.clone(),
                                         SymbolTableEntry::Variable {
-                                            ty: expected_field_ty.clone(),
+                                            ty: *expected_field_ty,
                                         },
                                     );
                                 } else {
@@ -1184,11 +1311,11 @@ impl TypeChecker {
 
                             for (field, rename) in fields {
                                 if let Some(expected_field_ty) = expected_fields.get(&field.0) {
-                                    let name = rename.as_ref().unwrap_or(&field).0.clone();
+                                    let name = rename.as_ref().unwrap_or(field).0.clone();
                                     self.symbol_table.insert(
                                         name,
                                         SymbolTableEntry::Variable {
-                                            ty: expected_field_ty.clone(),
+                                            ty: *expected_field_ty,
                                         },
                                     );
                                 } else {
@@ -1209,8 +1336,8 @@ impl TypeChecker {
                     if let Some(expected_ty) = &case_type {
                         if &ty != expected_ty {
                             self.errors.push(TypeError::TypeMismatch {
-                                expected_ty: expected_ty.clone(),
-                                received_ty: ty,
+                                expected_ty: self.p(*expected_ty).to_string(),
+                                received_ty: self.p(ty).to_string(),
                                 span: block.1.clone(),
                             });
                         }
@@ -1226,14 +1353,14 @@ impl TypeChecker {
         }
     }
 
-    fn check_expression_block(&mut self, block: &Span<ExprBlock>) -> Option<Type> {
+    fn check_expression_block(&mut self, block: &Span<ExprBlock>) -> Option<TypeId> {
         for stmt in &block.0.stmts {
             self.check_stmt(stmt)?;
         }
         if let Some(expr) = &block.0.end_expr {
             self.check_expr(expr)
         } else {
-            Some(Type::Void)
+            Some(self.void_ty)
         }
     }
 
@@ -1245,53 +1372,64 @@ impl TypeChecker {
         })
     }
 
-    fn apply_substitutions(&self, ty: Type) -> Type {
-        match ty {
+    fn apply_substitutions(&mut self, ty: TypeId) -> TypeId {
+        match self.types[ty].clone() {
             Type::Variable(name) => {
                 let Some(SymbolTableEntry::TypeVariable { idx }) = self.symbol_table.lookup(&name) else {
-                    return Type::Variable(name)
+                    return ty
                 };
 
-                self.type_variables[*idx]
-                    .clone()
-                    .unwrap_or(Type::Variable(name))
+                self.type_variables[*idx].unwrap_or(ty)
             }
-            Type::Array(inner_ty) => Type::Array(Box::new(self.apply_substitutions(*inner_ty))),
+            Type::Array(inner_ty) => {
+                let inner_ty = self.apply_substitutions(*inner_ty);
+                self.types.alloc(Type::Array(Box::new(inner_ty)))
+            }
             Type::Struct {
-                schema,
+                schema_id: schema,
                 type_arguments,
-            } => Type::Struct {
-                schema,
-                type_arguments: type_arguments
-                    .into_iter()
-                    .map(|arg| self.apply_substitutions(arg))
-                    .collect(),
-            },
+            } => {
+                let ty = Type::Struct {
+                    schema_id: schema,
+                    type_arguments: type_arguments
+                        .into_iter()
+                        .map(|arg| self.apply_substitutions(arg))
+                        .collect(),
+                };
+
+                self.types.alloc(ty)
+            }
             Type::Function {
                 param_types,
                 return_type,
                 type_parameters,
-            } => Type::Function {
-                param_types: param_types
-                    .into_iter()
-                    .map(|arg| self.apply_substitutions(arg))
-                    .collect(),
-                return_type: Box::new(self.apply_substitutions(*return_type)),
-                type_parameters,
-            },
-            ty => ty,
+            } => {
+                let ty = Type::Function {
+                    param_types: param_types
+                        .into_iter()
+                        .map(|arg| self.apply_substitutions(arg))
+                        .collect(),
+                    return_type: Box::new(self.apply_substitutions(*return_type)),
+                    type_parameters,
+                };
+
+                self.types.alloc(ty)
+            }
+            _ => ty,
         }
     }
 
+    #[instrument]
     fn instantiate_type_variable(
         &mut self,
         type_var_name: &str,
-        expr_ty: Type,
+        expr_ty: TypeId,
         expr_span: Range<usize>,
     ) {
         debug!(
             "instantiating type variable `{}` with type {}",
-            type_var_name, expr_ty
+            type_var_name,
+            self.p(expr_ty)
         );
         let Some(SymbolTableEntry::TypeVariable { idx }) = self.symbol_table.lookup(type_var_name) else {
             self.errors.push(TypeError::UndefinedType(type_var_name.to_string(), expr_span));
@@ -1299,10 +1437,10 @@ impl TypeChecker {
         };
 
         if let Some(instantiated_ty) = &self.type_variables[*idx] {
-            if &expr_ty != instantiated_ty {
+            if &self.types[expr_ty] != &self.types[*instantiated_ty] {
                 self.errors.push(TypeError::TypeMismatch {
-                    expected_ty: instantiated_ty.clone(),
-                    received_ty: expr_ty.clone(),
+                    expected_ty: self.p(*instantiated_ty).to_string(),
+                    received_ty: self.p(expr_ty).to_string(),
                     span: expr_span,
                 });
             }
@@ -1311,34 +1449,33 @@ impl TypeChecker {
         }
     }
 
+    #[instrument]
     fn compare_tuple_fields(
         &mut self,
         tuple_entries: &[Span<Expr>],
-        schema_fields: &[Type],
+        schema_fields: &[TypeId],
         struct_span: Range<usize>,
     ) -> Option<()> {
         for (i, entry) in tuple_entries.iter().enumerate() {
             let expr_ty = self.check_expr(entry)?;
-            match schema_fields.get(i) {
-                Some(Type::Variable(name)) => {
-                    self.instantiate_type_variable(&name, expr_ty, entry.1.clone());
-                }
-                Some(expected_ty) => {
-                    if &expr_ty != expected_ty {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected_ty: expected_ty.clone(),
-                            received_ty: expr_ty.clone(),
-                            span: entry.1.clone(),
-                        });
-                    }
-                }
-                None => {
-                    self.errors.push(TypeError::ArityMismatch(
-                        schema_fields.len(),
-                        tuple_entries.len(),
-                        struct_span.clone(),
-                    ));
-                }
+            let Some(expected_ty) = schema_fields.get(i) else {
+                self.errors.push(TypeError::ArityMismatch(
+                    schema_fields.len(),
+                    tuple_entries.len(),
+                    struct_span.clone(),
+                ));
+                continue
+            };
+
+            if let Type::Variable(name) = &self.types[*expected_ty] {
+                let name = name.clone();
+                self.instantiate_type_variable(&name, expr_ty, entry.1.clone());
+            } else if expr_ty != *expected_ty {
+                self.errors.push(TypeError::TypeMismatch {
+                    expected_ty: self.p(*expected_ty).to_string(),
+                    received_ty: self.p(expr_ty).to_string(),
+                    span: entry.1.clone(),
+                });
             }
         }
 
@@ -1349,19 +1486,19 @@ impl TypeChecker {
         &mut self,
         schema: &StructSchema,
         struct_span: Range<usize>,
-    ) -> Option<Vec<Type>> {
+    ) -> Option<Vec<TypeId>> {
         let mut type_arguments = vec![];
         for type_param in &schema.type_parameters {
             let Some(SymbolTableEntry::TypeVariable { idx }) = self.symbol_table.lookup(type_param) else {
-                self.errors.push(TypeError::UndefinedType(type_param.clone(), struct_span.clone()));
+                self.errors.push(TypeError::UndefinedType(type_param.clone(), struct_span));
                 return None
             };
             if let Some(type_arg) = &self.type_variables[*idx] {
-                type_arguments.push(type_arg.clone());
+                type_arguments.push(*type_arg);
             } else {
                 self.errors.push(TypeError::UnusedTypeParameter {
                     name: type_param.clone(),
-                    span: struct_span.clone(),
+                    span: struct_span,
                 });
                 return None;
             }
@@ -1370,13 +1507,63 @@ impl TypeChecker {
         Some(type_arguments)
     }
 
+    #[instrument]
+    fn unify(&mut self, t1: TypeId, t2: TypeId, span: Range<usize>) {
+        match (&self.types[t1], &self.types[t2]) {
+            (Type::Variable(name), _) => {
+                let name = name.clone();
+                self.instantiate_type_variable(&name, t1, span);
+            }
+            (_, Type::Variable(name)) => {
+                let name = name.clone();
+                self.instantiate_type_variable(&name, t2, span);
+            }
+            (
+                Type::Struct {
+                    schema_id: schema_id1,
+                    type_arguments: type_arguments1,
+                },
+                Type::Struct {
+                    schema_id: schema_id2,
+                    type_arguments: type_arguments2,
+                },
+            ) => {
+                if schema_id1 != schema_id2 {
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected_ty: self.p(t1).to_string(),
+                        received_ty: self.p(t2).to_string(),
+                        span: span.clone(),
+                    });
+                    return;
+                }
+
+                let type_arguments1 = type_arguments1.clone();
+                let type_arguments2 = type_arguments2.clone();
+
+                for (t1_arg, t2_arg) in type_arguments1.into_iter().zip(type_arguments2) {
+                    self.unify(t1_arg, t2_arg, span.clone());
+                }
+            }
+            (_, _) => {
+                if t1 != t2 {
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected_ty: self.p(t1).to_string(),
+                        received_ty: self.p(t2).to_string(),
+                        span,
+                    });
+                }
+            }
+        }
+    }
+
     fn check_fields(
         &mut self,
         struct_name: &str,
         struct_span: Range<usize>,
         literal_fields: &ExprFields,
-        struct_schema: &StructSchema,
-    ) -> Option<Vec<Type>> {
+        struct_schema_id: StructSchemaId,
+    ) -> Option<Vec<TypeId>> {
+        let struct_schema = self.struct_schemas[struct_schema_id].clone();
         if literal_fields.len() != struct_schema.fields.len() {
             let struct_type_fields = struct_schema.fields.clone();
             let literal_field_types = self.get_field_types(literal_fields);
@@ -1393,28 +1580,16 @@ impl TypeChecker {
             (Fields::Named(literal_fields), FieldsSchema::Named(schema_fields)) => {
                 for (field_name, field_value) in literal_fields {
                     let expr_ty = self.check_expr(field_value)?;
-                    match schema_fields.get(&field_name.0) {
-                        Some(Type::Variable(name)) => {
-                            self.instantiate_type_variable(name, expr_ty, field_value.1.clone());
-                        }
-                        Some(expected_ty) => {
-                            let expected_ty = self.apply_substitutions(expected_ty.clone());
-                            if &expr_ty != &expected_ty {
-                                self.errors.push(TypeError::TypeMismatch {
-                                    expected_ty: expected_ty.clone(),
-                                    received_ty: expr_ty.clone(),
-                                    span: field_value.1.clone(),
-                                });
-                            }
-                        }
-                        None => {
-                            self.errors.push(TypeError::MissingField {
-                                struct_name: struct_name.to_string(),
-                                field_name: field_name.0.clone(),
-                                span: field_name.1.clone(),
-                            });
-                        }
-                    }
+                    let Some(expected_ty) = schema_fields.get(&field_name.0) else {
+                        self.errors.push(TypeError::MissingField {
+                            struct_name: struct_name.to_string(),
+                            field_name: field_name.0.clone(),
+                            span: field_name.1.clone(),
+                        });
+                        continue
+                    };
+
+                    self.unify(*expected_ty, expr_ty, field_name.1.clone());
                 }
             }
             (Fields::Tuple(entries), FieldsSchema::Tuple(schema_fields)) => {
@@ -1432,7 +1607,7 @@ impl TypeChecker {
             }
         }
 
-        let type_arguments = self.get_type_arguments(struct_schema, struct_span)?;
+        let type_arguments = self.get_type_arguments(&struct_schema, struct_span)?;
         Some(type_arguments)
     }
 }
@@ -1458,9 +1633,10 @@ mod tests {
             ),
             0..7,
         );
+        let expr_ty = checker.check_expr(&expr).unwrap();
 
-        assert_eq!(checker.check_expr(&expr), Some(Type::I32));
-        insta::assert_yaml_snapshot!(checker.errors);
+        assert_eq!(checker.types[expr_ty], Type::I32);
+        insta::assert_debug_snapshot!(checker.errors);
 
         let expr = Span(
             Expr::Binary(
@@ -1472,7 +1648,7 @@ mod tests {
         );
 
         assert_eq!(checker.check_expr(&expr), None);
-        insta::assert_yaml_snapshot!(checker.errors);
+        insta::assert_debug_snapshot!(checker.errors);
     }
 
     #[test]
@@ -1486,7 +1662,7 @@ mod tests {
         z + y;",
         );
 
-        insta::assert_yaml_snapshot!(checker.check(&program));
+        insta::assert_debug_snapshot!(checker.check(&program));
 
         let checker = TypeChecker::new();
         let program = parse_program(
@@ -1498,7 +1674,7 @@ mod tests {
         ",
         );
 
-        insta::assert_yaml_snapshot!(checker.check(&program))
+        insta::assert_debug_snapshot!(checker.check(&program))
     }
 
     #[test]
@@ -1511,11 +1687,11 @@ mod tests {
         ",
         );
 
-        insta::assert_yaml_snapshot!(checker.check(&program));
+        insta::assert_debug_snapshot!(checker.check(&program));
 
         let checker = TypeChecker::new();
         let program = parse_program("let x = f();");
 
-        insta::assert_yaml_snapshot!(checker.check(&program));
+        insta::assert_debug_snapshot!(checker.check(&program));
     }
 }

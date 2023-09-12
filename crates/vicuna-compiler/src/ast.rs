@@ -1,3 +1,4 @@
+use serde::ser::{SerializeMap, SerializeSeq};
 use serde::Serialize;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -9,21 +10,43 @@ pub struct Program {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Span<T: Debug + Clone + PartialEq + Serialize>(pub T, pub Range<usize>);
+pub struct Span<T: Debug + Clone + PartialEq>(pub T, pub Range<usize>);
 
 impl<T: Debug + Clone + PartialEq + Serialize + Hash> Eq for Span<T> {}
 
 pub type TypeParams = Span<Vec<Span<String>>>;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub enum Fields<T: Debug + Clone + PartialEq + Serialize> {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Fields<T: Debug + Clone + PartialEq> {
     Named(Vec<(Span<String>, Span<T>)>),
     Tuple(Vec<Span<T>>),
     Empty,
 }
 
-impl<T: Debug + Clone + PartialEq + Serialize> Fields<T> {
-    pub fn map<U: Debug + Clone + PartialEq + Serialize>(
+impl<T: Serialize + Debug + Clone + PartialEq> Serialize for Fields<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Fields::Named(fields) => {
+                let mut map = serializer.serialize_map(Some(fields.len()))?;
+                for (name, value) in fields {
+                    map.serialize_entry(name, value)?;
+                }
+                map.end()
+            }
+            Fields::Tuple(fields) => {
+                let mut seq = serializer.serialize_seq(Some(fields.len()))?;
+                for value in fields {
+                    seq.serialize_element(value)?;
+                }
+                seq.end()
+            }
+            Fields::Empty => serializer.serialize_none(),
+        }
+    }
+}
+
+impl<T: Debug + Clone + PartialEq> Fields<T> {
+    pub fn map<U: Debug + Clone + PartialEq>(
         &self,
         mut f: impl FnMut(&Span<T>) -> Span<U>,
     ) -> Fields<U> {
@@ -34,7 +57,7 @@ impl<T: Debug + Clone + PartialEq + Serialize> Fields<T> {
                     .map(|(name, value)| (name.clone(), f(value)))
                     .collect(),
             ),
-            Fields::Tuple(fields) => Fields::Tuple(fields.iter().map(|value| f(value)).collect()),
+            Fields::Tuple(fields) => Fields::Tuple(fields.iter().map(f).collect()),
             Fields::Empty => Fields::Empty,
         }
     }
@@ -194,8 +217,6 @@ pub enum TypeSig {
     F32,
     String,
     Bool,
-    // This could technically be consolidated with the above one,
-    // but I want to keep a "happy path"
     Named(Span<String>, Vec<Span<TypeSig>>),
 }
 

@@ -35,7 +35,7 @@ let e = Expr {
   span: Span {
     start: 10,
     end: 20,
-    inner: "Hello, world!"
+    inner: 5
   },
   value: 10
 };

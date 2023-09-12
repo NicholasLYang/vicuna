@@ -1,0 +1,4 @@
+struct LinkedList<T> {
+    data: T,
+    next: LinkedList<T>
+}
