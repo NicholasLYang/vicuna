@@ -8,3 +8,29 @@ enum Expr {
   Binary(Expr, Expr, BinaryOp),
   Number(i32)
 }
+
+fn eval(expr: Expr) -> i32 {
+    match expr {
+      Expr::Binary(lhs, rhs, op) => {
+        match op {
+            BinaryOp::Add => {
+                eval(lhs) + eval(rhs)
+            },
+            BinaryOp::Sub => {
+                eval(lhs) - eval(rhs)
+            },
+            BinaryOp::Mul => {
+                eval(lhs) * eval(rhs)
+            }
+        }
+      },
+      Expr::Number(n) => {
+        n
+      }
+    }
+}
+
+let lhs = Expr::Number(1);
+let rhs = Expr::Number(2);
+let expr = Expr::Binary(lhs, rhs, BinaryOp::Add);
+print(eval(expr));

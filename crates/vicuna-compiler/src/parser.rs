@@ -123,12 +123,19 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .delimited_by(just('('), just(')'))
             .map(ExprFields::Tuple);
 
+        let empty_fields = empty().to(ExprFields::Empty);
+
         let enum_literal = ident
             .clone()
             .map_with_span(Span)
             .then_ignore(just("::"))
             .then(ident.clone().map_with_span(Span))
-            .then(named_fields.clone().or(tuple_fields.clone()))
+            .then(
+                named_fields
+                    .clone()
+                    .or(tuple_fields.clone())
+                    .or(empty_fields),
+            )
             .map_with_span(|((enum_name, variant_name), fields), span| {
                 Span(
                     Expr::Enum {
@@ -623,6 +630,7 @@ pub fn parse(source: &str) -> (Option<Program>, Vec<ParseError>) {
     let (output, errors) = parser().parse_recovery(source);
     let program = output.map(|statements| Program { statements });
 
+    println!("{:?}", program);
     (program, errors)
 }
 

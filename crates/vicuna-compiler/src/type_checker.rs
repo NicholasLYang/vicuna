@@ -649,7 +649,7 @@ impl TypeChecker {
                 }
 
                 self.symbol_table.exit_scope();
-
+                self.print_checker_state();
                 self.enum_schemas[schema_id].variants = variants_map;
             }
         }
@@ -843,6 +843,7 @@ impl TypeChecker {
                 }
             }
             Stmt::Type(decl) => {
+                println!("decl: {:?}", decl);
                 self.add_type_declaration(decl);
             }
             Stmt::Use { module, name } => {
