@@ -630,7 +630,6 @@ pub fn parse(source: &str) -> (Option<Program>, Vec<ParseError>) {
     let (output, errors) = parser().parse_recovery(source);
     let program = output.map(|statements| Program { statements });
 
-    println!("{:?}", program);
     (program, errors)
 }
 

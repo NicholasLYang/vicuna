@@ -1,5 +1,5 @@
 [workspace]
-
+resolver = "2"
 members = [
   "crates/vic",
   "crates/vicuna-compiler",
