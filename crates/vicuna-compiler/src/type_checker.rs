@@ -1044,32 +1044,7 @@ impl TypeChecker {
 
                 for (arg, param_type) in args.iter().zip(param_types) {
                     let arg_ty = self.check_expr(arg)?;
-                    if let Type::Variable(name) = &self.types[*param_type] {
-                        let entry = self
-                            .symbol_table
-                            .lookup(name)
-                            .expect("variable not in symbol table");
-
-                        if let SymbolTableEntry::TypeVariable { idx } = entry {
-                            if let Some(existing_ty) = &self.type_variables[*idx] {
-                                if existing_ty != &arg_ty {
-                                    self.errors.push(TypeError::TypeMismatch {
-                                        expected_ty: self.p(*existing_ty).to_string(),
-                                        received_ty: self.p(arg_ty).to_string(),
-                                        span: arg.1.clone(),
-                                    });
-                                }
-                            } else {
-                                self.type_variables[*idx] = Some(arg_ty);
-                            }
-                        }
-                    } else if arg_ty != *param_type {
-                        self.errors.push(TypeError::TypeMismatch {
-                            expected_ty: self.p(*param_type).to_string(),
-                            received_ty: self.p(arg_ty).to_string(),
-                            span: arg.1.clone(),
-                        });
-                    }
+                    self.unify(arg_ty, *param_type, arg.1.clone());
                 }
 
                 Some(self.apply_substitutions(**return_type))
@@ -1521,16 +1496,7 @@ impl TypeChecker {
                 continue;
             };
 
-            if let Type::Variable(name) = &self.types[*expected_ty] {
-                let name = name.clone();
-                self.instantiate_type_variable(&name, expr_ty, entry.1.clone());
-            } else if expr_ty != *expected_ty {
-                self.errors.push(TypeError::TypeMismatch {
-                    expected_ty: self.p(*expected_ty).to_string(),
-                    received_ty: self.p(expr_ty).to_string(),
-                    span: entry.1.clone(),
-                });
-            }
+            self.unify(*expected_ty, expr_ty, entry.1.clone());
         }
 
         Some(())
@@ -1580,6 +1546,32 @@ impl TypeChecker {
                     type_arguments: type_arguments1,
                 },
                 Type::Struct {
+                    schema_id: schema_id2,
+                    type_arguments: type_arguments2,
+                },
+            ) => {
+                if schema_id1 != schema_id2 {
+                    self.errors.push(TypeError::TypeMismatch {
+                        expected_ty: self.p(t1).to_string(),
+                        received_ty: self.p(t2).to_string(),
+                        span: span.clone(),
+                    });
+                    return;
+                }
+
+                let type_arguments1 = type_arguments1.clone();
+                let type_arguments2 = type_arguments2.clone();
+
+                for (t1_arg, t2_arg) in type_arguments1.into_iter().zip(type_arguments2) {
+                    self.unify(t1_arg, t2_arg, span.clone());
+                }
+            }
+            (
+                Type::Enum {
+                    schema_id: schema_id1,
+                    type_arguments: type_arguments1,
+                },
+                Type::Enum {
                     schema_id: schema_id2,
                     type_arguments: type_arguments2,
                 },
