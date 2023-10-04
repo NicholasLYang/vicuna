@@ -9,7 +9,7 @@ function base64ToBytes(base64: string): Uint8Array {
   const cleanedBase64 = base64.replace(/\s/g, "");
   console.log(cleanedBase64);
   const binString = atob(cleanedBase64.substring(0, cleanedBase64.length - 1));
-  return Uint8Array.from(binString, (m) => m.codePointAt(0));
+  return Uint8Array.from(binString, (m) => m.codePointAt(0) || 32);
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
