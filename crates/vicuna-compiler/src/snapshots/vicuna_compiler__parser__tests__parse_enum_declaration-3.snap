@@ -13,11 +13,10 @@ Ok:
       - - - A
           - start: 11
             end: 13
-        - Named:
-            - - - foo
-                - start: 15
-                  end: 18
-              - - String
-                - start: 19
-                  end: 27
+        - ? - foo
+            - start: 15
+              end: 18
+          : - String
+            - start: 19
+              end: 27
 

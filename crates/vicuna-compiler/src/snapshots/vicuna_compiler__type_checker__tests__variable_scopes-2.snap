@@ -2,12 +2,13 @@
 source: crates/vicuna-compiler/src/type_checker.rs
 expression: checker.check(&program)
 ---
-- UndefinedVariable:
-    - a
-    - start: 65
-      end: 67
-- UndefinedVariable:
-    - c
-    - start: 88
-      end: 90
-
+[
+    UndefinedVariable(
+        "a",
+        65..67,
+    ),
+    UndefinedVariable(
+        "c",
+        88..90,
+    ),
+]

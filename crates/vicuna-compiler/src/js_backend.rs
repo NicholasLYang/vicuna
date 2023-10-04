@@ -16,9 +16,28 @@ enum ExprBlockState {
     Binding(String),
 }
 
-pub struct JsBackend<T: Write> {
+pub struct JsBackend<T> {
     output: T,
     expression_block_state: Option<ExprBlockState>,
+}
+
+impl Expr {
+    // Returns whether a Vicuna expression compiles to a JS expression
+    // or to multiple statements (like with a match expression). Used to
+    // determine if we can return the expression directly, or if we need
+    // to delay that decision.
+    pub fn compiles_to_js_expression(&self) -> bool {
+        matches!(
+            self,
+            Expr::Value(_)
+                | Expr::Variable(_)
+                | Expr::PostFix(_, _)
+                | Expr::Binary(_, _, _)
+                | Expr::Unary(_, _)
+                | Expr::Struct(_, _)
+                | Expr::Enum { .. },
+        )
+    }
 }
 
 impl<T: Write> JsBackend<T> {
@@ -389,9 +408,13 @@ impl<T: Write> JsBackend<T> {
                     .expect("Expression block state should be set");
                 match expr_block_state {
                     ExprBlockState::Return => {
-                        self.output.write_all(b"return ")?;
-                        self.emit_expr(end_expr)?;
-                        self.output.write_all(b";\n")?;
+                        if end_expr.0.compiles_to_js_expression() {
+                            self.output.write_all(b"return ")?;
+                            self.emit_expr(end_expr)?;
+                            self.output.write_all(b";\n")?;
+                        } else {
+                            self.emit_expr(end_expr)?;
+                        }
                     }
                     ExprBlockState::Binding(var) => {
                         self.output.write_all(var.as_bytes())?;

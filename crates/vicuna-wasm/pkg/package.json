@@ -1,6 +1,6 @@
 {
   "name": "vicuna-wasm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "files": [
     "vicuna_wasm_bg.wasm",
     "vicuna_wasm.js",
