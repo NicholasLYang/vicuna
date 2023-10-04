@@ -1,6 +1,6 @@
 ---
 source: crates/vicuna-compiler/src/parser.rs
-expression: "stmt().parse(\"fn foo() { 20 }\")"
+expression: "statement().parse(\"fn foo() { 20 }\")"
 ---
 Ok:
   - Function:
@@ -8,6 +8,7 @@ Ok:
         - foo
         - start: 2
           end: 6
+      type_parameters: ~
       params: []
       return_type: ~
       body:

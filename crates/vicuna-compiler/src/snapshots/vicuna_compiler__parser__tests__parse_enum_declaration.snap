@@ -13,13 +13,13 @@ Ok:
       - - - A
           - start: 11
             end: 12
-        - Empty
+        - ~
       - - - B
           - start: 14
             end: 15
-        - Empty
+        - ~
       - - - C
           - start: 17
             end: 19
-        - Empty
+        - ~
 

@@ -7,14 +7,13 @@ Ok:
       - - Foo
         - start: 0
           end: 4
-      - Named:
-          - - - a
-              - start: 5
-                end: 7
-            - - Value:
-                  I32: 10
-              - start: 9
-                end: 11
+      - ? - a
+          - start: 5
+            end: 7
+        : - Value:
+              I32: 10
+          - start: 9
+            end: 11
   - start: 0
     end: 13
 

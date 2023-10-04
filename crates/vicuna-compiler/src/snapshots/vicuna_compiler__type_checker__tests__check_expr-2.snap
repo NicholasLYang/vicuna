@@ -2,10 +2,10 @@
 source: crates/vicuna-compiler/src/type_checker.rs
 expression: checker.errors
 ---
-- TypeMismatch:
-    expected_ty: I32
-    received_ty: Bool
-    span:
-      start: 6
-      end: 9
-
+[
+    TypeMismatch {
+        expected_ty: "i32",
+        received_ty: "bool",
+        span: 6..9,
+    },
+]

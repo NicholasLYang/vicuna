@@ -10,11 +10,10 @@ Ok:
         end: 11
     type_parameters: ~
     fields:
-      Named:
-        - - - a
-            - start: 13
-              end: 14
-          - - I32
-            - start: 15
-              end: 19
+      ? - a
+        - start: 13
+          end: 14
+      : - I32
+        - start: 15
+          end: 19
 
