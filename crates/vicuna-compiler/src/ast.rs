@@ -98,6 +98,11 @@ pub enum Stmt {
         then_block: Vec<Span<Stmt>>,
         else_block: Vec<Span<Stmt>>,
     },
+    For {
+        iterator_variable: Span<String>,
+        iterator: Span<Expr>,
+        body: Vec<Span<Stmt>>,
+    },
     Return(Option<Span<Expr>>),
     Import {
         ty: Span<ImportType>,

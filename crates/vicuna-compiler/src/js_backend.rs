@@ -137,6 +137,19 @@ impl<T: Write> JsBackend<T> {
                 }
                 writeln!(self.output, "}}")?;
             }
+            Stmt::For {
+                iterator_variable,
+                iterator,
+                body,
+            } => {
+                write!(self.output, "for (const {} of", &iterator_variable.0)?;
+                self.emit_expr(iterator)?;
+                writeln!(self.output, ") {{")?;
+                for stmt in body {
+                    self.emit_stmt(stmt)?;
+                }
+                writeln!(self.output, "}}")?;
+            }
             Stmt::Return(expr) => {
                 self.output.write_all(b"return ")?;
                 if let Some(expr) = expr {

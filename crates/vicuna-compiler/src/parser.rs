@@ -535,7 +535,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
 
         let if_stmt = keyword("if")
             .ignore_then(expression())
-            .then(block)
+            .then(block.clone())
             .then(optional_else)
             .map_with_span(|((condition, then_block), else_block), span| {
                 Span(
@@ -543,6 +543,22 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                         condition,
                         then_block,
                         else_block,
+                    },
+                    span,
+                )
+            });
+
+        let for_stmt = keyword("for")
+            .ignore_then(ident.clone())
+            .then_ignore(keyword("in"))
+            .then(expression())
+            .then(block.clone())
+            .map_with_span(|((iterator_variable, iterator), body), span| {
+                Span(
+                    Stmt::For {
+                        iterator_variable,
+                        iterator,
+                        body,
                     },
                     span,
                 )
@@ -605,6 +621,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
         function_decl
             .or(let_decl)
             .or(if_stmt)
+            .or(for_stmt)
             .or(return_stmt)
             .or(import_stmt)
             .or(type_declaration)

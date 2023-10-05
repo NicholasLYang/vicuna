@@ -35,6 +35,7 @@ pub type EnumSchemaId = Id<EnumSchema>;
 pub enum Type {
     I32,
     F32,
+    Char,
     Bool,
     Void,
     String,
@@ -179,6 +180,7 @@ impl DisplayWithArena<'_> for Type {
         match self {
             Type::I32 => write!(f, "i32"),
             Type::F32 => write!(f, "f32"),
+            Type::Char => write!(f, "char"),
             Type::Bool => write!(f, "bool"),
             Type::Void => write!(f, "void"),
             Type::String => write!(f, "string"),
@@ -308,6 +310,7 @@ pub struct TypeChecker {
     f32_ty: TypeId,
     bool_ty: TypeId,
     void_ty: TypeId,
+    char_ty: TypeId,
     string_ty: TypeId,
     js_ty: TypeId,
 }
@@ -389,6 +392,12 @@ pub enum TypeError {
         #[label]
         span: Range<usize>,
     },
+    #[error("expected iterable type such as array or string, received {ty}")]
+    ExpectedIterableType {
+        ty: String,
+        #[label]
+        span: Range<usize>,
+    },
 }
 
 impl TypeChecker {
@@ -396,6 +405,7 @@ impl TypeChecker {
         let mut type_arena = Arena::new();
         let i32_ty = type_arena.alloc(Type::I32);
         let f32_ty = type_arena.alloc(Type::F32);
+        let char_ty = type_arena.alloc(Type::Char);
         let bool_ty = type_arena.alloc(Type::Bool);
         let void_ty = type_arena.alloc(Type::Void);
         let string_ty = type_arena.alloc(Type::String);
@@ -411,6 +421,7 @@ impl TypeChecker {
             errors: Vec::new(),
             i32_ty,
             f32_ty,
+            char_ty,
             bool_ty,
             void_ty,
             string_ty,
@@ -808,6 +819,39 @@ impl TypeChecker {
 
                 self.enter_scope();
                 self.check_block(else_block);
+                self.exit_scope();
+            }
+            Stmt::For {
+                iterator_variable,
+                iterator,
+                body,
+            } => {
+                let iterator_ty = self.check_expr(iterator)?;
+                self.enter_scope();
+                match &self.types[iterator_ty] {
+                    Type::Array(item_ty) => {
+                        self.symbol_table.insert(
+                            iterator_variable.0.clone(),
+                            SymbolTableEntry::Variable { ty: **item_ty },
+                        );
+                    }
+                    Type::String => {
+                        let ty = self.char_ty;
+
+                        self.symbol_table.insert(
+                            iterator_variable.0.clone(),
+                            SymbolTableEntry::Variable { ty },
+                        );
+                    }
+                    _ => {
+                        self.errors.push(TypeError::ExpectedIterableType {
+                            ty: self.p(iterator_ty).to_string(),
+                            span: iterator.1.clone(),
+                        });
+                    }
+                }
+
+                self.check_block(body);
                 self.exit_scope();
             }
             Stmt::Return(expr) => {
