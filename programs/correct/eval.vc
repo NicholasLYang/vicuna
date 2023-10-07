@@ -6,7 +6,7 @@ enum BinaryOp {
 
 enum Expr {
   Binary(Expr, Expr, BinaryOp),
-  Integer(i32)
+  Number(i32)
 }
 
 fn eval(expr: Expr) -> i32 {
@@ -34,3 +34,9 @@ let lhs = Expr::Number(1);
 let rhs = Expr::Number(2);
 let expr = Expr::Binary(lhs, rhs, BinaryOp::Add);
 print(eval(expr));
+
+let lhs2 = Expr::Number(5);
+let rhs2 = Expr::Number(81);
+let expr2 = Expr::Binary(lhs2, rhs2, BinaryOp::Mul);
+print(eval(expr));
+

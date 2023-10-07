@@ -1,12 +1,16 @@
 use crate::type_checker::{EnumSchemaId, Name, StructSchemaId, TypeId};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
+use std::ops::Range;
 
 /// We have multiple symbols that need to be tracked and scoped accordingly.
 #[derive(Debug, Clone)]
 pub enum SymbolTableEntry {
     /// Normal variables like parameters or let bindings
-    Variable { ty: TypeId },
+    Variable {
+        ty: TypeId,
+        definition_span: Range<usize>,
+    },
     /// Generic type variables that is meant to be solved. I.e. you call a generic function
     /// `<T>(T) -> T` with a concrete type `i32` and the type checker will solve
     /// the type variable `T = i32`.
@@ -34,6 +38,10 @@ impl SymbolTable {
             scopes: vec![HashMap::new()],
             current_scope: 0,
         }
+    }
+
+    pub fn assert_single_scope(&self) {
+        debug_assert_eq!(self.scopes.len(), 1)
     }
 
     pub fn enter_scope(&mut self) {
