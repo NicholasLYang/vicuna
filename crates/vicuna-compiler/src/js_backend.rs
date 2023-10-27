@@ -142,7 +142,7 @@ impl<T: Write> JsBackend<T> {
                 iterator,
                 body,
             } => {
-                write!(self.output, "for (const {} of", &iterator_variable.0)?;
+                write!(self.output, "for (const {} of ", &iterator_variable.0)?;
                 self.emit_expr(iterator)?;
                 writeln!(self.output, ") {{")?;
                 for stmt in body {
@@ -274,11 +274,21 @@ impl<T: Write> JsBackend<T> {
                     BinaryOp::LessThanOrEqual => b"<=",
                     BinaryOp::Equal => b"===",
                     BinaryOp::NotEqual => b"!==",
+                    BinaryOp::Assign => b"=",
                 };
 
+                // We pre-emptively wrap assignments in parentheses
+                // to avoid JavaScript thinking the entire left hand
+                // side is part of the assignment.
+                if op.0 == BinaryOp::Assign {
+                    self.output.write_all(b"(")?;
+                }
                 self.emit_expr(lhs)?;
                 self.output.write_all(op_str)?;
                 self.emit_expr(rhs)?;
+                if op.0 == BinaryOp::Assign {
+                    self.output.write_all(b")")?;
+                }
             }
             Expr::Unary(op, rhs) => {
                 let op_str = match op.0 {

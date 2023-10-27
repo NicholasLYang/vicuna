@@ -222,6 +222,7 @@ pub enum TypeSig {
     F32,
     String,
     Bool,
+    Array(Box<Span<TypeSig>>),
     Named(Span<String>, Vec<Span<TypeSig>>),
 }
 
@@ -237,6 +238,7 @@ pub enum Value {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum BinaryOp {
+    Assign,
     Add,
     Subtract,
     Divide,

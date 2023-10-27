@@ -232,7 +232,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
                 Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
             });
 
-        addition
+        let comparison = addition
             .clone()
             .then(
                 op('>')
@@ -249,12 +249,35 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .foldl(|lhs, (op, rhs)| {
                 let span = (lhs.1.start())..(rhs.1.end());
                 Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
+            });
+
+        comparison
+            .clone()
+            .then(
+                op('=')
+                    .to(BinaryOp::Assign)
+                    .map_with_span(Span)
+                    .then(comparison)
+                    .map(Some)
+                    .or(empty().to(None)),
+            )
+            .map_with_span(|(lhs, rhs), span| {
+                if let Some((op, rhs)) = rhs {
+                    Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
+                } else {
+                    lhs
+                }
             })
     })
 }
 
 fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Clone {
     recursive(|type_sig| {
+        let array = just('[')
+            .padded()
+            .then(just(']').padded())
+            .map_with_span(Span);
+
         just("i32")
             .padded()
             .to(TypeSig::I32)
@@ -270,6 +293,12 @@ fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Cl
                 .map(|(name, args)| TypeSig::Named(name, args)))
             .or(ident().map(|name| TypeSig::Named(name, vec![])))
             .map_with_span(Span)
+            .then(array.repeated())
+            .foldl(|ty, array| {
+                let range = (ty.1.start())..(array.1.end());
+
+                Span(TypeSig::Array(Box::new(ty)), range)
+            })
     })
 }
 

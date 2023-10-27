@@ -382,6 +382,8 @@ pub enum TypeError {
     },
     #[error("expected {expected} generic arguments but {received} arguments were supplied")]
     TypeArityMismatch { expected: usize, received: usize },
+    #[error("cannot assign to this expression")]
+    CannotAssign(#[label] Range<usize>),
     #[error("trying to use a {pattern} pattern to match against {ty}")]
     WrongPattern {
         pattern: &'static str,
@@ -490,6 +492,10 @@ impl TypeChecker {
             TypeSig::F32 => Some(self.f32_ty),
             TypeSig::Bool => Some(self.bool_ty),
             TypeSig::String => Some(self.string_ty),
+            TypeSig::Array(ty) => {
+                let ty = self.check_type_sig(ty)?;
+                Some(self.types.alloc(Type::Array(Box::new(ty))))
+            }
             TypeSig::Named(name, type_args) => match self.symbol_table.lookup(&name.0) {
                 Some(SymbolTableEntry::Struct { schema_id })
                     if self.struct_schemas[*schema_id].type_parameters.len() == type_args.len() =>
@@ -964,6 +970,21 @@ impl TypeChecker {
         Some(())
     }
 
+    fn check_assignment(&mut self, lhs: &Span<Expr>, rhs: &Span<Expr>) -> Option<TypeId> {
+        // TODO: Handle indexing and fields
+        if !matches!(lhs.0, Expr::Variable(_)) {
+            self.errors.push(TypeError::CannotAssign(lhs.1.clone()));
+            return None;
+        }
+
+        let lhs_ty = self.check_expr(lhs)?;
+        let rhs_ty = self.check_expr(rhs)?;
+
+        self.unify(lhs_ty, rhs_ty, rhs.1.clone());
+
+        Some(lhs_ty)
+    }
+
     fn check_expr(&mut self, expr: &Span<Expr>) -> Option<TypeId> {
         debug!("checking expr: {:?}", expr.0);
         match &expr.0 {
@@ -971,6 +992,7 @@ impl TypeChecker {
                 let lhs_ty = self.check_expr(lhs)?;
                 let rhs_ty = self.check_expr(rhs)?;
                 match op.0 {
+                    BinaryOp::Assign => self.check_assignment(lhs, rhs),
                     BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide => {
                         if lhs_ty == self.i32_ty && rhs_ty == self.i32_ty {
                             Some(self.i32_ty)
@@ -1104,6 +1126,12 @@ impl TypeChecker {
                 let callee_ty = self.check_expr(callee)?;
                 let callee_ty = &self.types[callee_ty];
                 debug!("callee type: {:?}", callee);
+                if let Type::Array(_) = callee_ty {
+                    if field.0 == "length" {
+                        return Some(self.i32_ty);
+                    }
+                }
+
                 let Type::Struct {
                     schema_id,
                     type_arguments,
