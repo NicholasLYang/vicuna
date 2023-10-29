@@ -22,7 +22,7 @@ tracing = "0.1.37"
 
 [build-dependencies]
 build-target = "0.4.0"
-cc="*"
+cc="1.0.83"
 
 [dev-dependencies]
 insta = { version = "1.29.0", features = ["yaml"] }
