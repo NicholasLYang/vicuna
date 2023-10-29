@@ -3,6 +3,7 @@ name = "vic"
 version = "0.1.1"
 edition = "2021"
 repository = "https://github.com/nicholaslyang/vicuna"
+license = "MIT"
 description = "CLI for the Vicuna programming language"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -13,5 +14,5 @@ clap = { version = "4.2.3", features = ["derive"] }
 colored = "2.0.4"
 miette = { version = "5.8.0", features = ["fancy"] }
 tracing-subscriber = "0.3.16"
-vicuna-compiler = { path = "../vicuna-compiler" }
-vicuna-runtime = { path = "../vicuna-runtime" }
+vicuna-compiler = { path = "../vicuna-compiler", version = "0.1.1" }
+vicuna-runtime = { path = "../vicuna-runtime", version = "0.1.1" }
