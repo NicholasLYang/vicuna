@@ -2,6 +2,8 @@
 name = "vicuna-compiler"
 version = "0.1.1"
 edition = "2021"
+repository = "https://github.com/nicholaslyang/vicuna"
+license = "MIT"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
