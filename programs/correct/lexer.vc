@@ -11,7 +11,7 @@ fn tokenize(input: string) {
   let start = 0;
   let i = 0;
   for s in input {
-       if s == " " {
+       if s == ' ' {
          out.push(input.substring(start, i));
        }
        i = i + 1;

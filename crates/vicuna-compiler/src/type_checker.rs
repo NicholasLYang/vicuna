@@ -1050,6 +1050,7 @@ impl TypeChecker {
                 Value::Bool(_) => Some(self.bool_ty),
                 Value::String(_) => Some(self.string_ty),
                 Value::F32(_) => Some(self.f32_ty),
+                Value::Char(_) => Some(self.char_ty),
             },
             Expr::Variable(name) => {
                 if let Some(SymbolTableEntry::Variable { ty, .. }) = self.symbol_table.lookup(name)

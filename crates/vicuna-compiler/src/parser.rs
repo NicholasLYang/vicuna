@@ -70,10 +70,13 @@ fn optional_comment() -> impl Parser<char, (), Error = ParseError> + Clone {
     comment().or(empty())
 }
 
+fn string_char() -> impl Parser<char, char, Error = ParseError> + Clone {
+    none_of('"').or(just('\\').ignore_then(any()))
+}
+
 fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
-    let string_char = none_of('"').or(just('\\').ignore_then(any()));
     just('"')
-        .ignore_then(string_char.repeated())
+        .ignore_then(string_char().repeated())
         .then_ignore(just('"'))
         .padded_by(optional_comment())
         .map(|chars| chars.into_iter().collect())
@@ -102,9 +105,17 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .padded_by(optional_comment())
             .to(true)
             .or(keyword("false").padded_by(optional_comment()).to(false))
-            .map_with_span(|b, span| Span(Expr::Value(Value::Bool(b)), span));
+            .map_with_span(|b, span| Span(Expr::Value(Value::Bool(b)), span))
+            .boxed();
 
-        let string = string().map_with_span(|s, span| Span(Expr::Value(Value::String(s)), span));
+        // TODO: Add escapes
+        let char = string_char()
+            .delimited_by(just('\''), just('\''))
+            .map_with_span(|c, span| Span(Expr::Value(Value::Char(c)), span));
+
+        let string = string()
+            .map_with_span(|s, span| Span(Expr::Value(Value::String(s)), span))
+            .boxed();
 
         let named_fields = ident
             .clone()
@@ -145,13 +156,15 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
                     },
                     span,
                 )
-            });
+            })
+            .boxed();
 
         let struct_literal = ident
             .clone()
             .map_with_span(Span)
             .then(named_fields)
-            .map_with_span(|(name, fields), span| Span(Expr::Struct(name, fields), span));
+            .map_with_span(|(name, fields), span| Span(Expr::Struct(name, fields), span))
+            .boxed();
 
         let array_literal = expr
             .clone()
@@ -159,20 +172,24 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .allow_trailing()
             .delimited_by(just('['), just(']'))
             .map(Expr::Array)
-            .map_with_span(Span);
+            .map_with_span(Span)
+            .boxed();
 
-        let atom = float
-            .or(int)
-            .or(expr.clone().delimited_by(just('('), just(')')))
-            .or(bool)
-            .or(string)
-            .or(enum_literal)
-            .or(struct_literal)
-            .or(array_literal)
-            .or(ident
+        let atom = choice((
+            float,
+            int,
+            char,
+            expr.clone().delimited_by(just('('), just(')')),
+            bool,
+            string,
+            enum_literal,
+            struct_literal,
+            array_literal,
+            ident
                 .clone()
-                .map_with_span(|i, span| Span(Expr::Variable(i), span)))
-            .padded();
+                .map_with_span(|i, span| Span(Expr::Variable(i), span)),
+        ))
+        .padded();
 
         let args = expr
             .clone()
@@ -244,16 +261,17 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
         let comparison = addition
             .clone()
             .then(
-                op('>')
-                    .to(BinaryOp::GreaterThan)
-                    .or(op('<').to(BinaryOp::LessThan))
-                    .or(op2(">=").to(BinaryOp::GreaterThanOrEqual))
-                    .or(op2("<=").to(BinaryOp::LessThanOrEqual))
-                    .or(op2("==").to(BinaryOp::Equal))
-                    .or(op2("!=").to(BinaryOp::NotEqual))
-                    .map_with_span(Span)
-                    .then(addition)
-                    .repeated(),
+                choice((
+                    op('>').to(BinaryOp::GreaterThan),
+                    op('<').to(BinaryOp::LessThan),
+                    op2(">=").to(BinaryOp::GreaterThanOrEqual),
+                    op2("<=").to(BinaryOp::LessThanOrEqual),
+                    op2("==").to(BinaryOp::Equal),
+                    op2("!=").to(BinaryOp::NotEqual),
+                ))
+                .map_with_span(Span)
+                .then(addition)
+                .repeated(),
             )
             .foldl(|lhs, (op, rhs)| {
                 let span = (lhs.1.start())..(rhs.1.end());
@@ -656,19 +674,21 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .then_ignore(just_padded(';'))
             .map_with_span(|expr, span| Span(Stmt::Return(expr), span));
 
-        function_decl
-            .or(let_decl)
-            .or(if_stmt)
-            .or(for_stmt)
-            .or(return_stmt)
-            .or(import_stmt)
-            .or(type_declaration)
-            .or(use_stmt)
-            .or(expression()
+        choice((
+            function_decl,
+            let_decl,
+            if_stmt,
+            for_stmt,
+            return_stmt,
+            import_stmt,
+            type_declaration,
+            use_stmt,
+            expression()
                 .then_ignore(just_padded(';'))
-                .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)))
-            .padded()
-            .padded_by(optional_comment())
+                .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)),
+        ))
+        .padded()
+        .padded_by(optional_comment())
     })
 }
 

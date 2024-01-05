@@ -476,6 +476,9 @@ impl<T: Write> JsBackend<T> {
             Value::String(s) => {
                 write!(self.output, "\"{}\"", s)?;
             }
+            Value::Char(c) => {
+                write!(self.output, "\"{}\"", c)?;
+            }
         }
 
         Ok(())

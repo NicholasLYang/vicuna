@@ -235,6 +235,7 @@ pub enum Value {
     F32(f32),
     Bool(bool),
     String(String),
+    Char(char),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
