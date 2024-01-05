@@ -183,6 +183,7 @@ pub enum Expr {
         expr: Box<Span<Expr>>,
         cases: Vec<(Span<MatchCase>, Span<ExprBlock>)>,
     },
+    Array(Vec<Span<Expr>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

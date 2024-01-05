@@ -355,6 +355,16 @@ impl<T: Write> JsBackend<T> {
                 }
                 self.output.write_all(b"}")?;
             }
+            Expr::Array(elements) => {
+                self.output.write_all(b"[")?;
+                for (idx, element) in elements.iter().enumerate() {
+                    self.emit_expr(element)?;
+                    if idx < elements.len() - 1 {
+                        self.output.write_all(b", ")?;
+                    }
+                }
+                self.output.write_all(b"]")?;
+            }
         }
 
         Ok(())

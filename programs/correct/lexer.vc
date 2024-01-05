@@ -7,10 +7,13 @@ enum Token {
 }
 
 fn tokenize(input: string) {
+  let out = [];
+  let start = 0;
   let i = 0;
   for s in input {
-       print(s);
-       print(i);
+       if s == " " {
+         out.push(input.substring(start, i));
+       }
        i = i + 1;
   }
 }

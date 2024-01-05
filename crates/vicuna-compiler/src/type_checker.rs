@@ -1122,23 +1122,49 @@ impl TypeChecker {
 
                 Some(self.apply_substitutions(**return_type))
             }
-            Expr::PostFix(callee, Span(PostFix::Field(field), field_span)) => {
-                let callee_ty = self.check_expr(callee)?;
-                let callee_ty = &self.types[callee_ty];
-                debug!("callee type: {:?}", callee);
-                if let Type::Array(_) = callee_ty {
-                    if field.0 == "length" {
-                        return Some(self.i32_ty);
-                    }
+            Expr::PostFix(lhs, Span(PostFix::Field(field), field_span)) => {
+                let lhs_ty_id = self.check_expr(lhs)?;
+                let lhs_ty = &self.types[lhs_ty_id];
+                debug!("lhs type: {:?}", lhs);
+                match lhs_ty {
+                    Type::Array(_) => match &*field.0 {
+                        "length" => {
+                            return Some(self.i32_ty);
+                        }
+                        "push" => {
+                            let push_ty = self.types.alloc(Type::Function {
+                                param_types: vec![lhs_ty_id],
+                                return_type: Box::new(self.void_ty),
+                                type_parameters: Vec::new(),
+                            });
+                            return Some(push_ty);
+                        }
+                        _ => {}
+                    },
+                    Type::String => match &*field.0 {
+                        "length" => {
+                            return Some(self.i32_ty);
+                        }
+                        "substring" => {
+                            let substring_ty = self.types.alloc(Type::Function {
+                                param_types: vec![self.i32_ty, self.i32_ty],
+                                return_type: Box::new(self.string_ty),
+                                type_parameters: Vec::new(),
+                            });
+                            return Some(substring_ty);
+                        }
+                        _ => {}
+                    },
+                    _ => {}
                 }
 
                 let Type::Struct {
                     schema_id,
                     type_arguments,
-                } = callee_ty
+                } = lhs_ty
                 else {
                     self.errors
-                        .push(TypeError::NotStruct(callee_ty.clone(), callee.1.clone()));
+                        .push(TypeError::NotStruct(lhs_ty.clone(), lhs.1.clone()));
                     return None;
                 };
 
@@ -1447,6 +1473,22 @@ impl TypeChecker {
                 }
 
                 case_type
+            }
+            Expr::Array(elements) => {
+                let mut element_ty = None;
+                for element in elements {
+                    let ty = self.check_expr(element)?;
+                    if let Some(expected_ty) = &element_ty {
+                        self.unify(ty, *expected_ty, element.1.clone());
+                    } else {
+                        element_ty = Some(ty);
+                    }
+                }
+
+                let element_ty = element_ty
+                    .unwrap_or_else(|| self.types.alloc(Type::Variable("array type".to_string())));
+
+                Some(self.types.alloc(Type::Array(Box::new(element_ty))))
             }
         }
     }

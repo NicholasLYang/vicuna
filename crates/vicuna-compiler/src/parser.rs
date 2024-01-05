@@ -153,6 +153,14 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .then(named_fields)
             .map_with_span(|(name, fields), span| Span(Expr::Struct(name, fields), span));
 
+        let array_literal = expr
+            .clone()
+            .separated_by(just(','))
+            .allow_trailing()
+            .delimited_by(just('['), just(']'))
+            .map(Expr::Array)
+            .map_with_span(Span);
+
         let atom = float
             .or(int)
             .or(expr.clone().delimited_by(just('('), just(')')))
@@ -160,6 +168,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .or(string)
             .or(enum_literal)
             .or(struct_literal)
+            .or(array_literal)
             .or(ident
                 .clone()
                 .map_with_span(|i, span| Span(Expr::Variable(i), span)))
