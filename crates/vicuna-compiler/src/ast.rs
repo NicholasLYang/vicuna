@@ -195,6 +195,7 @@ pub enum MatchCase {
     },
     String(String),
     Char(char),
+    Variable(Span<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

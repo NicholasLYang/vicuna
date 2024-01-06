@@ -14,7 +14,7 @@ use crate::ast::{
 use crate::symbol_table::{SymbolTable, SymbolTableEntry};
 use id_arena::{Arena, Id};
 use miette::Diagnostic;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::Range;
 use std::{fmt, mem};
@@ -451,6 +451,18 @@ pub enum TypeError {
         previous_definition_span: Range<usize>,
         #[label]
         current_definition_span: Range<usize>,
+    },
+    #[error("match does not handle all cases of enum {enum_name}, missing: {missing_variants}")]
+    NonExhaustiveEnumMatch {
+        enum_name: String,
+        missing_variants: String,
+        #[label]
+        span: Range<usize>,
+    },
+    #[error("match does not handle all cases, please add a default case")]
+    NonExhaustiveValueMatch {
+        #[label]
+        span: Range<usize>,
     },
 }
 
@@ -1357,11 +1369,16 @@ impl TypeChecker {
 
                 Some(then_ty)
             }
-            Expr::Match { expr, cases } => {
-                let expr_ty = self.check_expr(expr)?;
+            Expr::Match {
+                expr: case_expr,
+                cases,
+            } => {
+                let expr_ty = self.check_expr(case_expr)?;
 
                 // Type of each case block must be the same
                 let mut case_type = None;
+
+                self.check_match_exhaustiveness(expr_ty, cases, expr.1.clone());
 
                 for (case, block) in cases {
                     match &case.0 {
@@ -1374,7 +1391,7 @@ impl TypeChecker {
                             let Type::Enum { schema_id, .. } = &self.types[expr_ty] else {
                                 self.errors.push(TypeError::NotEnum(
                                     self.p(expr_ty).to_string(),
-                                    expr.1.clone(),
+                                    case_expr.1.clone(),
                                 ));
                                 return None;
                             };
@@ -1390,7 +1407,7 @@ impl TypeChecker {
                             )?;
                         }
                         MatchCase::String(_) => {
-                            self.unify(expr_ty, self.string_ty, expr.1.clone());
+                            self.unify(expr_ty, self.string_ty, case_expr.1.clone());
                             if let Some(ty) = self.check_expression_block(block) {
                                 if let Some(expected_ty) = &case_type {
                                     self.unify(ty, *expected_ty, case.1.clone());
@@ -1400,7 +1417,7 @@ impl TypeChecker {
                             }
                         }
                         MatchCase::Char(_) => {
-                            self.unify(expr_ty, self.char_ty, expr.1.clone());
+                            self.unify(expr_ty, self.char_ty, case_expr.1.clone());
                             if let Some(ty) = self.check_expression_block(block) {
                                 if let Some(expected_ty) = &case_type {
                                     self.unify(ty, *expected_ty, case.1.clone());
@@ -1408,6 +1425,26 @@ impl TypeChecker {
                                     case_type = Some(ty);
                                 }
                             }
+                        }
+                        MatchCase::Variable(name) => {
+                            self.in_scope(|this| {
+                                this.symbol_table.insert(
+                                    name.0.clone(),
+                                    SymbolTableEntry::Variable {
+                                        ty: expr_ty,
+                                        definition_span: name.1.clone(),
+                                    },
+                                );
+
+                                let ty = this.check_expression_block(block)?;
+                                if let Some(expected_ty) = &case_type {
+                                    this.unify(ty, *expected_ty, case.1.clone());
+                                } else {
+                                    case_type = Some(ty);
+                                }
+
+                                Some(())
+                            })?;
                         }
                     }
                 }
@@ -1432,6 +1469,52 @@ impl TypeChecker {
                 });
 
                 Some(self.types.alloc(Type::Array(Box::new(element_ty))))
+            }
+        }
+    }
+
+    fn check_match_exhaustiveness(
+        &mut self,
+        expr_ty: TypeId,
+        cases: &[(Span<MatchCase>, Span<ExprBlock>)],
+        match_span: Range<usize>,
+    ) {
+        match &self.types[expr_ty] {
+            Type::Enum { schema_id, .. } => {
+                let schema = &self.enum_schemas[*schema_id];
+                let mut missing_variants: HashSet<_> = schema.variants.keys().collect();
+                for (case, _) in cases {
+                    match &case.0 {
+                        MatchCase::Enum { variant_name, .. } => {
+                            missing_variants.remove(&variant_name.0);
+                        }
+                        MatchCase::Variable(_) => {
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !missing_variants.is_empty() {
+                    self.errors.push(TypeError::NonExhaustiveEnumMatch {
+                        enum_name: schema.name.clone(),
+                        missing_variants: missing_variants.into_iter().cloned().collect(),
+                        span: match_span,
+                    });
+                }
+            }
+            _ => {
+                for (case, _) in cases {
+                    match &case.0 {
+                        MatchCase::Variable(_) => {
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+
+                self.errors
+                    .push(TypeError::NonExhaustiveValueMatch { span: match_span });
             }
         }
     }

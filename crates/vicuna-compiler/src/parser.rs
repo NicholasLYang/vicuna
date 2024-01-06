@@ -518,21 +518,28 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .map_with_span(|c, span| Span(MatchCase::Char(c), span))
             .padded();
 
+        let var_match_pattern = ident
+            .clone()
+            .map_with_span(|s, span| Span(MatchCase::Variable(s), span));
+
         match_expression.define(
             keyword("match")
                 .padded()
                 .ignore_then(expression().map(Box::new))
                 .then(
-                    enum_match_pattern
-                        .or(string_match_pattern)
-                        .or(char_match_pattern)
-                        .then_ignore(just_padded("=>"))
-                        .then(expression_block.clone().map_with_span(Span))
-                        .padded()
-                        .separated_by(just_padded(','))
-                        .allow_trailing()
-                        .padded()
-                        .delimited_by(just_padded('{'), just_padded('}')),
+                    choice((
+                        enum_match_pattern,
+                        string_match_pattern,
+                        char_match_pattern,
+                        var_match_pattern,
+                    ))
+                    .then_ignore(just_padded("=>"))
+                    .then(expression_block.clone().map_with_span(Span))
+                    .padded()
+                    .separated_by(just_padded(','))
+                    .allow_trailing()
+                    .padded()
+                    .delimited_by(just_padded('{'), just_padded('}')),
                 )
                 .map_with_span(|(expr, cases), span| Span(Expr::Match { expr, cases }, span)),
         );

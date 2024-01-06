@@ -24,34 +24,38 @@ function print(...args) {
 }
 let __match__;
 function Integer(a0) {
-  const out = [];
-  out[0] = a0;
-  out.type = "Integer";
-  return out;
+const out = [];
+out[0] = a0;
+out.type = "Integer";
+return out;
 }
 function tokenize(input) {
-  let out = [];
-  for (const s of input) {
-    __match__ = s;
-    switch (__match__) {
-      case "+": {
-        out.push({ __type__: "Plus", __enum__: "Token" });
-        break;
-      }
-      case "-": {
-        out.push({ __type__: "Minus", __enum__: "Token" });
-        break;
-      }
-      case "*": {
-        out.push({ __type__: "Star", __enum__: "Token" });
-        break;
-      }
-      case "/": {
-        out.push({ __type__: "Slash", __enum__: "Token" });
-        break;
-      }
-    }
-  }
-  print(out);
+let out = [];
+for (const s of input) {
+__match__ = s;
+switch (__match__) {
+case "+": {
+out.push({ "__type__": "Plus",  "__enum__": "Token", });
+break;
+}
+case "-": {
+out.push({ "__type__": "Minus",  "__enum__": "Token", });
+break;
+}
+case "*": {
+out.push({ "__type__": "Star",  "__enum__": "Token", });
+break;
+}
+case "/": {
+out.push({ "__type__": "Slash",  "__enum__": "Token", });
+break;
+}
+default: {
+const _ = __match__;
+break;
+}
+};
+}
+print(out);
 }
 tokenize("+-*/");

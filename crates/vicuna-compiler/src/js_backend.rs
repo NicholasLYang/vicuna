@@ -355,13 +355,13 @@ impl<T: Write> JsBackend<T> {
                     self.output.write_all(b"switch (__match__) {\n")?;
                 }
                 for (case, body) in cases {
-                    self.output.write_all(b"case \"")?;
                     match &case.0 {
                         MatchCase::Enum {
                             variant_name,
                             fields,
                             ..
                         } => {
+                            self.output.write_all(b"case \"")?;
                             self.output.write_all(variant_name.0.as_bytes())?;
                             self.output.write_all(b"\": {\n")?;
 
@@ -370,12 +370,20 @@ impl<T: Write> JsBackend<T> {
                             }
                         }
                         MatchCase::String(s) => {
+                            self.output.write_all(b"case \"")?;
                             self.output.write_all(s.as_bytes())?;
                             self.output.write_all(b"\": {\n")?;
                         }
                         MatchCase::Char(c) => {
+                            self.output.write_all(b"case \"")?;
                             self.output.write_all(c.to_string().as_bytes())?;
                             self.output.write_all(b"\": {\n")?;
+                        }
+                        MatchCase::Variable(name) => {
+                            self.output.write_all(b"default: {\n")?;
+                            self.output.write_all(b"const ")?;
+                            self.output.write_all(name.0.as_bytes())?;
+                            self.output.write_all(b" = __match__;\n")?;
                         }
                     }
 

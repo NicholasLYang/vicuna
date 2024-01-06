@@ -21,7 +21,8 @@ fn tokenize(input: string) {
           },
           '/' => {
                 out.push(Token::Slash);
-          }
+          },
+          _ => {}
        }
   }
 
