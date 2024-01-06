@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, ExprFields, Function, ImportType, MatchBindings, PostFix, Program,
-    Span, Stmt, TypeDeclaration, TypeFields, UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, ExprFields, Function, ImportType, MatchBindings, MatchCase, PostFix,
+    Program, Span, Stmt, TypeDeclaration, TypeFields, UnaryOp, Value,
 };
 use anyhow::Result;
 use std::io::Write;
@@ -50,6 +50,7 @@ impl<T: Write> JsBackend<T> {
 
     // Emits the standard preamble for Vicuna
     pub fn emit_preamble(&mut self) -> Result<()> {
+        self.output.write_all(include_bytes!("stdlib.js"))?;
         Ok(self.output.write_all(b"let __match__;\n")?)
     }
 
@@ -232,12 +233,7 @@ impl<T: Write> JsBackend<T> {
                 self.emit_value(value)?;
             }
             Expr::Variable(name) => {
-                // TODO: Figure out better way of mapping special names
-                if name == "print" {
-                    self.output.write_all(b"console.log")?;
-                } else {
-                    self.output.write_all(name.as_bytes())?;
-                }
+                self.output.write_all(name.as_bytes())?;
             }
             Expr::PostFix(callee, Span(PostFix::Args(args), _)) => {
                 self.emit_expr(callee)?;
@@ -310,11 +306,14 @@ impl<T: Write> JsBackend<T> {
             Expr::Enum {
                 variant_name,
                 fields,
-                ..
+                enum_name,
             } => {
                 self.output.write_all(b"{")?;
                 self.output.write_all(b" \"__type__\": \"")?;
                 self.output.write_all(variant_name.0.as_bytes())?;
+                self.output.write_all(b"\", ")?;
+                self.output.write_all(b" \"__enum__\": \"")?;
+                self.output.write_all(enum_name.0.as_bytes())?;
                 self.output.write_all(b"\", ")?;
                 self.emit_expr_fields(fields)?;
                 self.output.write_all(b"}")?;
@@ -339,14 +338,45 @@ impl<T: Write> JsBackend<T> {
                 self.emit_expr(expr)?;
                 self.output.write_all(b";\n")?;
 
-                self.output.write_all(b"switch (__match__.__type__) {\n")?;
+                // This is a quick hack to determine if we should
+                // match on the `__type__` field of the match expression,
+                // or on the match expression directly.
+                let mut is_enum = false;
+                for (case, _) in cases {
+                    match &case.0 {
+                        MatchCase::Enum { .. } => is_enum = true,
+                        _ => {}
+                    }
+                }
+
+                if is_enum {
+                    self.output.write_all(b"switch (__match__.__type__) {\n")?;
+                } else {
+                    self.output.write_all(b"switch (__match__) {\n")?;
+                }
                 for (case, body) in cases {
                     self.output.write_all(b"case \"")?;
-                    self.output.write_all(case.0.variant_name.0.as_bytes())?;
-                    self.output.write_all(b"\": {\n")?;
+                    match &case.0 {
+                        MatchCase::Enum {
+                            variant_name,
+                            fields,
+                            ..
+                        } => {
+                            self.output.write_all(variant_name.0.as_bytes())?;
+                            self.output.write_all(b"\": {\n")?;
 
-                    if let Some(bindings) = &case.0.fields {
-                        self.emit_match_bindings(bindings)?;
+                            if let Some(bindings) = fields {
+                                self.emit_match_bindings(bindings)?;
+                            }
+                        }
+                        MatchCase::String(s) => {
+                            self.output.write_all(s.as_bytes())?;
+                            self.output.write_all(b"\": {\n")?;
+                        }
+                        MatchCase::Char(c) => {
+                            self.output.write_all(c.to_string().as_bytes())?;
+                            self.output.write_all(b"\": {\n")?;
+                        }
                     }
 
                     self.emit_expression_block(body)?;

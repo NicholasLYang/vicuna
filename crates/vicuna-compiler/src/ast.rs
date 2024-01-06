@@ -187,10 +187,14 @@ pub enum Expr {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct MatchCase {
-    pub enum_name: Span<String>,
-    pub variant_name: Span<String>,
-    pub fields: Option<MatchBindings>,
+pub enum MatchCase {
+    Enum {
+        enum_name: Span<String>,
+        variant_name: Span<String>,
+        fields: Option<MatchBindings>,
+    },
+    String(String),
+    Char(char),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

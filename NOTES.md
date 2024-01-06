@@ -88,6 +88,8 @@ impl Foo for i32 {
 - Add completeness checking for pattern matching
 - ~~Add tuple enum variants~~
 - ~~Add empty enum variants~~
+- Add ranges (1..2 or 1.to(2))
+- Add closures and iterators
 
 # Consolidate Structs and Emums
 

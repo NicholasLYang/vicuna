@@ -82,6 +82,8 @@ fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
         .map(|chars| chars.into_iter().collect())
 }
 
+/// Parses basic expressions like binary operators and atoms. Does not parse
+/// anything with a block like match or if expressions.
 pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clone {
     let ident = text::ident().padded().padded_by(optional_comment());
     recursive(|expr| {
@@ -484,7 +486,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .delimited_by(just_padded('('), just_padded(')'))
             .map(|bindings| MatchBindings::Tuple(bindings.into_iter().collect::<Vec<_>>()));
 
-        let match_pattern = ident
+        let enum_match_pattern = ident
             .clone()
             .then_ignore(just_padded("::"))
             .then(ident.clone())
@@ -497,7 +499,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .padded()
             .map_with_span(|((enum_name, variant_name), fields), span| {
                 Span(
-                    MatchCase {
+                    MatchCase::Enum {
                         enum_name,
                         variant_name,
                         fields,
@@ -506,12 +508,24 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 )
             });
 
+        let string_match_pattern = string()
+            .map_with_span(|s, span| Span(MatchCase::String(s), span))
+            .padded();
+
+        let char_match_pattern = just('\'')
+            .ignore_then(string_char())
+            .then_ignore(just('\''))
+            .map_with_span(|c, span| Span(MatchCase::Char(c), span))
+            .padded();
+
         match_expression.define(
             keyword("match")
                 .padded()
                 .ignore_then(expression().map(Box::new))
                 .then(
-                    match_pattern
+                    enum_match_pattern
+                        .or(string_match_pattern)
+                        .or(char_match_pattern)
                         .then_ignore(just_padded("=>"))
                         .then(expression_block.clone().map_with_span(Span))
                         .padded()
@@ -575,7 +589,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .then_ignore(just_padded('='))
             .then(
                 if_expression
-                    .or(match_expression)
+                    .or(match_expression.clone())
                     .or(expression().padded().then_ignore(just_padded(';'))),
             )
             .map_with_span(|(ident, expr), span| Span(Stmt::Let(ident, expr), span));
@@ -683,6 +697,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             import_stmt,
             type_declaration,
             use_stmt,
+            match_expression.map_with_span(|expr, span| Span(Stmt::Expr(expr), span)),
             expression()
                 .then_ignore(just_padded(';'))
                 .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)),

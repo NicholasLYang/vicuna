@@ -8,14 +8,24 @@ enum Token {
 
 fn tokenize(input: string) {
   let out = [];
-  let start = 0;
-  let i = 0;
   for s in input {
-       if s == ' ' {
-         out.push(input.substring(start, i));
+       match s {
+          '+' => {
+              out.push(Token::Plus);
+          },
+          '-' => {
+              out.push(Token::Minus);
+          },
+          '*' => {
+                out.push(Token::Star);
+          },
+          '/' => {
+                out.push(Token::Slash);
+          }
        }
-       i = i + 1;
   }
+
+  print(out);
 }
 
-tokenize("hello world");
+tokenize("+-*/");
