@@ -36,6 +36,7 @@ pub enum Type {
     Bool,
     Void,
     String,
+    Regex,
     GenericVariable(Name),
     /// An unknown type that needs to be inferred
     Variable {
@@ -198,6 +199,7 @@ impl DisplayWithArena<'_> for Type {
             Type::Bool => write!(f, "bool"),
             Type::Void => write!(f, "void"),
             Type::String => write!(f, "string"),
+            Type::Regex => write!(f, "regex"),
             Type::Js => write!(f, "<js value>"),
             Type::GenericVariable(name) => write!(f, "{}", name),
             Type::Variable { idx } => {
@@ -358,6 +360,7 @@ pub struct TypeChecker {
     char_ty: TypeId,
     string_ty: TypeId,
     js_ty: TypeId,
+    regex_ty: Id<Type>,
 }
 
 impl Debug for TypeChecker {
@@ -475,6 +478,7 @@ impl TypeChecker {
         let bool_ty = type_arena.alloc(Type::Bool);
         let void_ty = type_arena.alloc(Type::Void);
         let string_ty = type_arena.alloc(Type::String);
+        let regex_ty = type_arena.alloc(Type::Regex);
         let js_ty = type_arena.alloc(Type::Js);
 
         Self {
@@ -491,6 +495,7 @@ impl TypeChecker {
             bool_ty,
             void_ty,
             string_ty,
+            regex_ty,
             js_ty,
         }
     }
@@ -1112,6 +1117,7 @@ impl TypeChecker {
                 Value::String(_) => Some(self.string_ty),
                 Value::F32(_) => Some(self.f32_ty),
                 Value::Char(_) => Some(self.char_ty),
+                Value::Regex(_) => Some(self.regex_ty),
             },
             Expr::Variable(name) => {
                 if let Some(SymbolTableEntry::Variable { ty, .. }) = self.symbol_table.lookup(name)

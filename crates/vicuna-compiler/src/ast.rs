@@ -241,6 +241,7 @@ pub enum Value {
     Bool(bool),
     String(String),
     Char(char),
+    Regex(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

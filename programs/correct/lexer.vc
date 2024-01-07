@@ -22,7 +22,11 @@ fn tokenize(input: string) {
           '/' => {
                 out.push(Token::Slash);
           },
-          _ => {}
+          s => {
+             if s.matches(/[0-9]/) {
+                print("integer found");
+             }
+          }
        }
   }
 

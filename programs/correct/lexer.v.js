@@ -51,7 +51,11 @@ out.push({ "__type__": "Slash",  "__enum__": "Token", });
 break;
 }
 default: {
-const _ = __match__;
+const s = __match__;
+if (s.matches(/[0-9]/)) {
+print("integer found");
+} else {
+}
 break;
 }
 };

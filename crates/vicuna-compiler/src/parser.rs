@@ -177,6 +177,16 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .map_with_span(Span)
             .boxed();
 
+        let regex_char = none_of('/').or(just('\\').ignore_then(any()));
+
+        let regex_literal = just('/')
+            .ignore_then(regex_char.repeated())
+            .then_ignore(just('/'))
+            .padded_by(optional_comment())
+            .map(|chars| chars.into_iter().collect::<String>())
+            .map_with_span(|s, span| Span(Expr::Value(Value::Regex(s)), span))
+            .boxed();
+
         let atom = choice((
             float,
             int,
@@ -187,6 +197,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             enum_literal,
             struct_literal,
             array_literal,
+            regex_literal,
             ident
                 .clone()
                 .map_with_span(|i, span| Span(Expr::Variable(i), span)),
@@ -297,6 +308,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
                     lhs
                 }
             })
+            .padded()
     })
 }
 
