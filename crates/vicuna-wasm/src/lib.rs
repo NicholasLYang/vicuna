@@ -53,12 +53,12 @@ pub fn run_compiler(source: &str) -> WasmOutput {
     match compile(source) {
         Ok(CompilerOutput {
             js,
+            ast,
             errors:
                 Errors {
                     parse_errors,
                     type_errors,
                 },
-            ast,
         }) => {
             let errors = parse_errors
                 .into_iter()
@@ -71,8 +71,8 @@ pub fn run_compiler(source: &str) -> WasmOutput {
                 .collect();
 
             WasmOutput {
-                js: Some(js),
-                ast: Some(format!("{:#?}", ast)),
+                js: js,
+                ast: ast.map(|ast| format!("{:#?}", ast)),
                 errors,
             }
         }

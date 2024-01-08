@@ -352,6 +352,7 @@ pub struct TypeChecker {
     struct_schemas: Arena<StructSchema>,
     enum_schemas: Arena<EnumSchema>,
     return_type: Option<TypeId>,
+    exports: HashMap<Name, Range<usize>>,
     pub(crate) errors: Vec<TypeError>,
     i32_ty: TypeId,
     f32_ty: TypeId,
@@ -467,6 +468,13 @@ pub enum TypeError {
         #[label]
         span: Range<usize>,
     },
+    #[error("cannot have multiple exports with the same name")]
+    DuplicateExport {
+        #[label("export with this name previously declared here")]
+        previous_definition_span: Range<usize>,
+        #[label("duplicate")]
+        current_definition_span: Range<usize>,
+    },
 }
 
 impl TypeChecker {
@@ -486,6 +494,7 @@ impl TypeChecker {
             type_variables: Vec::new(),
             types: type_arena,
             struct_schemas: Arena::new(),
+            exports: HashMap::new(),
             enum_schemas: Arena::new(),
             return_type: None,
             errors: Vec::new(),
@@ -988,6 +997,20 @@ impl TypeChecker {
                             definition_span: name.1.clone(),
                         },
                     );
+                }
+            }
+            Stmt::Export { name } => {
+                if self.symbol_table.lookup(&name.0).is_none() {
+                    self.errors
+                        .push(TypeError::UndefinedVariable(name.0.clone(), name.1.clone()));
+                }
+                if let Some(previous_definition_span) = self.exports.get(&name.0) {
+                    self.errors.push(TypeError::DuplicateExport {
+                        previous_definition_span: previous_definition_span.clone(),
+                        current_definition_span: stmt.1.clone(),
+                    });
+                } else {
+                    self.exports.insert(name.0.clone(), stmt.1.clone());
                 }
             }
             Stmt::Type(_) => {

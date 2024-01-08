@@ -8,7 +8,7 @@ use std::mem;
 
 // We need to keep track of whether we're emitting an expression block
 // as the last expression of a function, in which case we want to add
-// a return statement to the last expression, or whether we're emitting
+// a return statement to the last expression, or if we're emitting
 // it as a variable binding, in which case we want to assign the result
 // to the variable.
 enum ExprBlockState {
@@ -79,6 +79,11 @@ impl<T: Write> JsBackend<T> {
                 write!(self.output, "let {} = ", name.0)?;
                 self.emit_expr(rhs)?;
                 self.output.write_all(b";\n")?;
+            }
+            Stmt::Export { name } => {
+                self.output.write_all(b"export { ")?;
+                self.output.write_all(name.0.as_bytes())?;
+                self.output.write_all(b" };\n")?;
             }
             Stmt::Expr(expr) => {
                 self.emit_expr(expr)?;

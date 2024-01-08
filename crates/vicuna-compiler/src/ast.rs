@@ -61,6 +61,14 @@ impl<T: Debug + Clone + PartialEq> Fields<T> {
             Fields::Empty => Fields::Empty,
         }
     }
+
+    pub fn for_each(&self, mut f: impl FnMut(&Span<T>) -> ()) {
+        match self {
+            Fields::Named(fields) => fields.iter().for_each(|(_, value)| f(value)),
+            Fields::Tuple(fields) => fields.iter().for_each(f),
+            Fields::Empty => (),
+        }
+    }
 }
 
 pub type TypeFields = Fields<TypeSig>;
@@ -109,6 +117,9 @@ pub enum Stmt {
         default_import: Option<Span<String>>,
         named_imports: Vec<Span<String>>,
         path: Span<String>,
+    },
+    Export {
+        name: Span<String>,
     },
     Type(TypeDeclaration),
     // The equivalent of OCaml's open, basically put a variant in scope. I'll probably end

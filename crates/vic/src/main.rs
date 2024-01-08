@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use colored::Colorize;
 use miette::{Error, Report};
@@ -16,6 +16,8 @@ enum Command {
     Check { source_path: PathBuf },
     /// Compile a Vicuna file to JavaScript
     Build { source_path: PathBuf },
+    /// Show dependency graph of Vicuna files
+    Graph { source_path: PathBuf },
 }
 
 fn print_errors(source: String, errors: Errors) {
@@ -43,7 +45,11 @@ fn build(source_path: &Path) -> Result<PathBuf> {
 
     let output_path = source_path.with_extension("v.js");
     print_errors(source, output.errors);
-    fs::write(&output_path, output.js)?;
+    let js = output
+        .js
+        .ok_or(anyhow!("could not run due to compilation errors"))?;
+
+    fs::write(&output_path, js)?;
     println!("{} {}", "Emitted".blue().bold(), output_path.display());
 
     Ok(output_path)
@@ -60,6 +66,12 @@ fn run(source_path: &Path) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn graph(source_path: &Path) -> Result<()> {
+    let mut resolver = vicuna_compiler::Resolver::new(source_path.to_path_buf());
+    resolver.build()?;
     Ok(())
 }
 
@@ -86,6 +98,7 @@ fn main() -> Result<()> {
         Command::Build { source_path } => {
             build(&source_path)?;
         }
+        Command::Graph { source_path } => graph(&source_path)?,
     }
 
     Ok(())

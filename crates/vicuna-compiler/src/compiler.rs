@@ -7,8 +7,8 @@ use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub struct CompilerOutput {
-    pub js: String,
-    pub ast: Program,
+    pub js: Option<String>,
+    pub ast: Option<Program>,
     pub errors: Errors,
 }
 
@@ -25,7 +25,7 @@ pub fn check(source: &str) -> Errors {
         return Errors {
             parse_errors,
             type_errors: Vec::new(),
-        }
+        };
     };
     debug!("AST: {:?}", program);
 
@@ -43,13 +43,13 @@ pub fn compile(source: &str) -> Result<CompilerOutput> {
 
     let Some(program) = program else {
         return Ok(CompilerOutput {
-            js: String::new(),
-            ast: Program::default(),
+            js: None,
+            ast: None,
             errors: Errors {
                 parse_errors,
                 type_errors: Vec::new(),
             },
-        })
+        });
     };
     debug!("AST: {:#?}", program);
 
@@ -61,8 +61,8 @@ pub fn compile(source: &str) -> Result<CompilerOutput> {
     js_backend.emit_program(&program)?;
     let js = String::from_utf8(output)?;
     Ok(CompilerOutput {
-        js,
-        ast: program,
+        js: Some(js),
+        ast: Some(program),
         errors: Errors {
             parse_errors,
             type_errors,

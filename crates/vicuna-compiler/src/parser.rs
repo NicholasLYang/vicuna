@@ -677,6 +677,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .then_ignore(just_padded(',').padded().to(()).or(empty()))
             .then(
                 ident
+                    .clone()
                     .separated_by(just_padded(','))
                     .allow_trailing()
                     .delimited_by(just_padded('{'), just_padded('}'))
@@ -699,6 +700,12 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 },
             );
 
+        let export_stmt = keyword("export")
+            .padded()
+            .ignore_then(ident)
+            .then_ignore(just_padded(';'))
+            .map_with_span(|name, span| Span(Stmt::Export { name }, span));
+
         let type_declaration =
             type_declaration().map_with_span(|decl, span| Span(Stmt::Type(decl), span));
 
@@ -716,6 +723,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             import_stmt,
             type_declaration,
             use_stmt,
+            export_stmt,
             match_expression.map_with_span(|expr, span| Span(Stmt::Expr(expr), span)),
             expression()
                 .then_ignore(just_padded(';'))
