@@ -1,7 +1,7 @@
 use crate::ast::{Expr, ExprBlock, Program, Span, Stmt};
 use crate::parse;
-use crate::parser::ParseError;
 use clean_path::Clean;
+use miette::Diagnostic;
 use petgraph::dot::Dot;
 use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
@@ -15,13 +15,16 @@ pub struct Resolver {
     file_nodes: HashMap<PathBuf, NodeIndex>,
     visited_files: HashSet<PathBuf>,
     file_graph: Graph<PathBuf, (), Directed>,
-    errors: Vec<ParseError>,
+    errors: Vec<crate::diagnostics::Diagnostic>,
 }
 
-#[derive(Debug, Error)]
-pub enum ResolverError {
+#[derive(Debug, Error, Diagnostic)]
+pub enum ResolverDiagnostic {
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    // TODO: Add code span if exists
+    #[error("file {path} does not exist")]
+    FileDoesNotExist { path: PathBuf },
 }
 
 impl Resolver {
@@ -37,13 +40,13 @@ impl Resolver {
             errors: Vec::new(),
         }
     }
-    pub fn build(&mut self) -> Result<(), ResolverError> {
+    pub fn build(&mut self) {
         while let Some(file_idx) = self.stack.pop() {
             let file = self.file_graph[file_idx].clone();
             if self.visited_files.contains(&file) {
                 continue;
             }
-            self.add_deps(&file)?;
+            self.add_deps(&file);
 
             for dep in &self.deps {
                 let dep_idx = self
@@ -59,21 +62,25 @@ impl Resolver {
             self.visited_files.insert(file.clone());
         }
         println!("{:?}", Dot::new(&self.file_graph));
-        Ok(())
     }
 
-    fn add_deps(&mut self, file: &Path) -> Result<(), ResolverError> {
+    fn add_deps(&mut self, file: &Path) {
         let Ok(file_contents) = std::fs::read_to_string(&file) else {
-            todo!("Add error handling");
+            self.errors.push(crate::diagnostics::Diagnostic::Resolver(
+                ResolverDiagnostic::FileDoesNotExist {
+                    path: file.to_path_buf(),
+                },
+            ));
+            return;
         };
         let (program, errors) = parse(&file_contents);
-        self.errors.extend(errors);
-        let Some(program) = program else {
-            return Ok(());
-        };
+        self.errors.extend(
+            errors
+                .into_iter()
+                .map(crate::diagnostics::Diagnostic::Parse),
+        );
+        let Some(program) = program else { return };
         self.get_imports_in_program(&file, &program);
-
-        Ok(())
     }
 
     fn get_imports_in_program(&mut self, current_path: &Path, program: &Program) {

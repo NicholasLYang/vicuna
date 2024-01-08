@@ -1,6 +1,6 @@
 use crate::ast::Program;
 use crate::js_backend::JsBackend;
-use crate::parser::{parse, ParseError};
+use crate::parser::{parse, ParseDiagnostic};
 use crate::type_checker::{TypeChecker, TypeError};
 use anyhow::Result;
 use tracing::debug;
@@ -14,7 +14,7 @@ pub struct CompilerOutput {
 
 #[derive(Debug, Clone)]
 pub struct Errors {
-    pub parse_errors: Vec<ParseError>,
+    pub parse_errors: Vec<ParseDiagnostic>,
     pub type_errors: Vec<TypeError>,
 }
 

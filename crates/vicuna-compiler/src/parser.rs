@@ -10,7 +10,7 @@ use std::ops::Range;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Error, Diagnostic)]
-pub enum ParseError {
+pub enum ParseDiagnostic {
     #[diagnostic(code(parse_error::expected_found))]
     #[error("Expected {expected_chars:?} but found {received_char:?}")]
     ExpectedFound {
@@ -21,7 +21,7 @@ pub enum ParseError {
     },
 }
 
-impl chumsky::Error<char> for ParseError {
+impl chumsky::Error<char> for ParseDiagnostic {
     type Span = Range<usize>;
     type Label = ();
 
@@ -58,7 +58,7 @@ impl chumsky::Error<char> for ParseError {
     }
 }
 
-fn comment() -> impl Parser<char, (), Error = ParseError> + Clone {
+fn comment() -> impl Parser<char, (), Error = ParseDiagnostic> + Clone {
     let single_line = just("//").then(take_until(text::newline())).ignored();
 
     let multi_line = just("/*").then(take_until(just("*/"))).ignored();
@@ -66,15 +66,15 @@ fn comment() -> impl Parser<char, (), Error = ParseError> + Clone {
     single_line.or(multi_line)
 }
 
-fn optional_comment() -> impl Parser<char, (), Error = ParseError> + Clone {
+fn optional_comment() -> impl Parser<char, (), Error = ParseDiagnostic> + Clone {
     comment().or(empty())
 }
 
-fn string_char() -> impl Parser<char, char, Error = ParseError> + Clone {
+fn string_char() -> impl Parser<char, char, Error = ParseDiagnostic> + Clone {
     none_of('"').or(just('\\').ignore_then(any()))
 }
 
-fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
+fn string() -> impl Parser<char, String, Error = ParseDiagnostic> + Clone {
     just('"')
         .ignore_then(string_char().repeated())
         .then_ignore(just('"'))
@@ -84,7 +84,7 @@ fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
 
 /// Parses basic expressions like binary operators and atoms. Does not parse
 /// anything with a block like match or if expressions.
-pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clone {
+pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseDiagnostic> + Clone {
     let ident = text::ident().padded().padded_by(optional_comment());
     recursive(|expr| {
         let int = text::int(10)
@@ -312,7 +312,7 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
     })
 }
 
-fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Clone {
+fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseDiagnostic> + Clone {
     recursive(|type_sig| {
         let array = just('[')
             .padded()
@@ -343,7 +343,7 @@ fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Cl
     })
 }
 
-fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone {
+fn ident() -> impl Parser<char, Span<String>, Error = ParseDiagnostic> + Clone {
     text::ident()
         .padded()
         .padded_by(optional_comment())
@@ -352,15 +352,15 @@ fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone {
 
 pub fn just_padded<C: OrderedContainer<char> + Clone>(
     inputs: C,
-) -> impl Parser<char, C, Error = ParseError> + Clone {
+) -> impl Parser<char, C, Error = ParseDiagnostic> + Clone {
     just(inputs).padded_by(optional_comment())
 }
 
-pub fn keyword(s: &'static str) -> impl Parser<char, (), Error = ParseError> + Clone {
+pub fn keyword(s: &'static str) -> impl Parser<char, (), Error = ParseDiagnostic> + Clone {
     text::keyword(s).padded_by(optional_comment())
 }
 
-fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> {
+fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseDiagnostic> {
     let ident = ident();
 
     let field = ident
@@ -437,7 +437,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
     enum_declaration.or(struct_declaration)
 }
 
-fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
+fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseDiagnostic> {
     recursive(|stmt| {
         let ident = ident();
 
@@ -734,7 +734,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
     })
 }
 
-fn parser() -> impl Parser<char, Vec<Span<Stmt>>, Error = ParseError> {
+fn parser() -> impl Parser<char, Vec<Span<Stmt>>, Error = ParseDiagnostic> {
     comment()
         .to(None)
         .or(statement().map(Some))
@@ -743,7 +743,7 @@ fn parser() -> impl Parser<char, Vec<Span<Stmt>>, Error = ParseError> {
         .then_ignore(end())
 }
 
-pub fn parse(source: &str) -> (Option<Program>, Vec<ParseError>) {
+pub fn parse(source: &str) -> (Option<Program>, Vec<ParseDiagnostic>) {
     let (output, errors) = parser().parse_recovery(source);
     let program = output.map(|statements| Program { statements });
 

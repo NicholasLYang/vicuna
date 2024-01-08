@@ -1,1 +1,2 @@
 import a from "./bar";
+import b from "./baz";

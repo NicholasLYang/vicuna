@@ -71,7 +71,7 @@ fn run(source_path: &Path) -> Result<()> {
 
 fn graph(source_path: &Path) -> Result<()> {
     let mut resolver = vicuna_compiler::Resolver::new(source_path.to_path_buf());
-    resolver.build()?;
+    resolver.build();
     Ok(())
 }
 

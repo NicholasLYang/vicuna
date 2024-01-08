@@ -1,2 +1,3 @@
+import b from './b.js';
 let a = 10;
 export a;

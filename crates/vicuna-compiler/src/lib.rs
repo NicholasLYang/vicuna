@@ -1,5 +1,6 @@
 mod ast;
 mod compiler;
+mod diagnostics;
 mod js_backend;
 mod parser;
 mod resolver;
