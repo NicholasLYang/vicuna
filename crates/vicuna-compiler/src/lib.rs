@@ -7,6 +7,6 @@ mod resolver;
 mod symbol_table;
 mod type_checker;
 
-pub use compiler::{check, compile, CompilerOutput, Errors};
+pub use compiler::{check, compile, CompilerOutput};
+pub use diagnostics::Diagnostic;
 pub use parser::parse;
-pub use resolver::Resolver;

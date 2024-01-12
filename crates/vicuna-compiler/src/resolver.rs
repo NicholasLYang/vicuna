@@ -10,13 +10,19 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-pub struct Resolver {
+pub struct ResolverBuilder {
     stack: Vec<NodeIndex>,
     deps: Vec<PathBuf>,
     file_nodes: HashMap<PathBuf, NodeIndex>,
+    asts: HashMap<PathBuf, Program>,
     visited_files: HashSet<PathBuf>,
     file_graph: Graph<PathBuf, (), Directed>,
     diagnostics: Vec<crate::diagnostics::Diagnostic>,
+}
+
+pub(crate) struct Resolver {
+    file_graph: Graph<PathBuf, (), Directed>,
+    asts: HashMap<PathBuf, Program>,
 }
 
 #[derive(Debug, Error, Diagnostic)]
@@ -30,7 +36,7 @@ pub enum ResolverDiagnostic {
     CycleDetected { cycles: String },
 }
 
-impl Resolver {
+impl ResolverBuilder {
     pub fn new(root_file: PathBuf) -> Self {
         let mut file_graph = Graph::new();
         let root_idx = file_graph.add_node(root_file.clone());
@@ -43,10 +49,11 @@ impl Resolver {
             visited_files: HashSet::new(),
             file_graph,
             diagnostics: Vec::new(),
+            asts: HashMap::new(),
         }
     }
 
-    pub fn build(&mut self) {
+    pub fn build(mut self) -> (Resolver, Vec<crate::diagnostics::Diagnostic>) {
         while let Some(file_idx) = self.stack.pop() {
             let file = self.file_graph[file_idx].clone();
             if self.visited_files.contains(&file) {
@@ -67,48 +74,13 @@ impl Resolver {
             self.deps.clear();
             self.visited_files.insert(file.clone());
         }
-    }
-    pub fn traverse(&mut self) {
-        match toposort(&self.file_graph, None) {
-            Ok(nodes) => {
-                nodes.iter().for_each(|node_idx| {
-                    println!("{}", self.file_graph[*node_idx].display());
-                });
-            }
-            Err(_) => {
-                // If only the cycle error returned good information...
-                let cycles = tarjan_scc(&self.file_graph);
-                let cycles = cycles
-                    .into_iter()
-                    .map(|cycle| {
-                        if cycle.len() == 2 {
-                            cycle
-                                .into_iter()
-                                .map(|node| self.file_graph[node].display())
-                                .join(" <-> ")
-                        } else {
-                            cycle
-                                .into_iter()
-                                .map(|node| self.file_graph[node].display())
-                                .join(" -> ")
-                        }
-                    })
-                    .join("\n");
 
-                self.diagnostics
-                    .push(crate::diagnostics::Diagnostic::Resolver(
-                        ResolverDiagnostic::CycleDetected { cycles },
-                    ))
-            }
-        }
-    }
+        let resolver = Resolver {
+            file_graph: self.file_graph,
+            asts: self.asts,
+        };
 
-    pub fn into_diagnostics(self) -> Vec<crate::diagnostics::Diagnostic> {
-        self.diagnostics
-    }
-
-    pub fn print_graph(&self) {
-        println!("{:?}", petgraph::dot::Dot::new(&self.file_graph));
+        (resolver, self.diagnostics)
     }
 
     fn add_deps(&mut self, file: &Path) {
@@ -129,6 +101,7 @@ impl Resolver {
         );
         let Some(program) = program else { return };
         self.get_imports_in_program(&file, &program);
+        self.asts.insert(file.to_path_buf(), program);
     }
 
     fn get_imports_in_program(&mut self, current_path: &Path, program: &Program) {
@@ -230,5 +203,46 @@ impl Resolver {
         if let Some(end_expr) = &expr_block.0.end_expr {
             self.get_imports_in_expr(current_path, end_expr);
         }
+    }
+}
+
+impl Resolver {
+    pub fn traverse(&mut self) -> Result<Vec<NodeIndex>, ResolverDiagnostic> {
+        toposort(&self.file_graph, None).map_err(|_| {
+            // If only the cycle error returned good information...
+            let cycles = tarjan_scc(&self.file_graph);
+            let cycles = cycles
+                .into_iter()
+                .map(|cycle| {
+                    if cycle.len() == 2 {
+                        cycle
+                            .into_iter()
+                            .map(|node| self.file_graph[node].display())
+                            .join(" <-> ")
+                    } else {
+                        cycle
+                            .into_iter()
+                            .map(|node| self.file_graph[node].display())
+                            .join(" -> ")
+                    }
+                })
+                .join("\n");
+
+            ResolverDiagnostic::CycleDetected { cycles }
+        })
+    }
+
+    pub fn print_graph(&self) {
+        println!("{:?}", petgraph::dot::Dot::new(&self.file_graph));
+    }
+
+    pub fn get_path(&self, idx: NodeIndex) -> Option<&PathBuf> {
+        self.file_graph.node_weight(idx)
+    }
+
+    pub fn remove_ast(&mut self, idx: NodeIndex) -> Option<Program> {
+        let path = &self.file_graph[idx];
+
+        self.asts.remove(path)
     }
 }

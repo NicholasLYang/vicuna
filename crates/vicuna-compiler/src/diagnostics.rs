@@ -15,4 +15,7 @@ pub enum Diagnostic {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Resolver(ResolverDiagnostic),
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Type(#[from] crate::type_checker::TypeDiagnostic),
 }

@@ -1,23 +1,25 @@
 use miette::Report;
-use vicuna_compiler::{compile, parse, CompilerOutput, Errors};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use vicuna_compiler::{compile, parse, CompilerOutput};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub struct WasmOutput {
-    js: Option<String>,
-    ast: Option<String>,
+    js: Option<HashMap<PathBuf, String>>,
+    ast: Option<HashMap<PathBuf, String>>,
     errors: Vec<String>,
 }
 
 #[wasm_bindgen]
 impl WasmOutput {
     #[wasm_bindgen(getter)]
-    pub fn js(&self) -> Option<String> {
+    pub fn js(&self) -> Option<HashMap<PathBuf, String>> {
         self.js.clone()
     }
 
     #[wasm_bindgen(getter)]
-    pub fn ast(&self) -> Option<String> {
+    pub fn ast(&self) -> Option<HashMap<PathBuf, String>> {
         self.ast.clone()
     }
 
@@ -54,20 +56,11 @@ pub fn run_compiler(source: &str) -> WasmOutput {
         Ok(CompilerOutput {
             js,
             ast,
-            errors:
-                Errors {
-                    parse_errors,
-                    type_errors,
-                },
+            diagnostics,
         }) => {
-            let errors = parse_errors
+            let errors = errors
                 .into_iter()
-                .map(|e| e.to_string())
-                .chain(
-                    type_errors
-                        .into_iter()
-                        .map(|e| format!("{:?}", Report::new(e))),
-                )
+                .chain(diagnostics.into_iter().map(|d| d.to_string()))
                 .collect();
 
             WasmOutput {
