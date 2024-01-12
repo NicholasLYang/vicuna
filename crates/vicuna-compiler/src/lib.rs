@@ -7,6 +7,7 @@ mod resolver;
 mod symbol_table;
 mod type_checker;
 
+pub use ast::Program;
 pub use compiler::{check, compile, CompilerOutput};
 pub use diagnostics::Diagnostic;
 pub use parser::parse;

@@ -1,32 +1,15 @@
-use miette::Report;
+use serde::{Deserialize, Serialize};
+use serde_wasm_bindgen::Error;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use vicuna_compiler::{compile, parse, CompilerOutput};
+use vicuna_compiler::{compile, parse, CompilerOutput, Program};
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct WasmOutput {
     js: Option<HashMap<PathBuf, String>>,
-    ast: Option<HashMap<PathBuf, String>>,
+    ast: Option<HashMap<PathBuf, Program>>,
     errors: Vec<String>,
-}
-
-#[wasm_bindgen]
-impl WasmOutput {
-    #[wasm_bindgen(getter)]
-    pub fn js(&self) -> Option<HashMap<PathBuf, String>> {
-        self.js.clone()
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn ast(&self) -> Option<HashMap<PathBuf, String>> {
-        self.ast.clone()
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn errors(&self) -> String {
-        self.errors.join("\n")
-    }
 }
 
 #[wasm_bindgen(start)]
@@ -36,7 +19,7 @@ fn init() {
 }
 
 #[wasm_bindgen]
-pub fn run_compiler(source: &str) -> WasmOutput {
+pub fn run_compiler(source: &str) -> Result<JsValue, Error> {
     let mut errors = vec![];
     let (program, parse_errors) = parse(source);
 
@@ -45,11 +28,11 @@ pub fn run_compiler(source: &str) -> WasmOutput {
     }
 
     let Some(program) = program else {
-        return WasmOutput {
+        return serde_wasm_bindgen::to_value(&WasmOutput {
             js: None,
             ast: None,
             errors,
-        };
+        });
     };
 
     match compile(source) {
@@ -64,8 +47,8 @@ pub fn run_compiler(source: &str) -> WasmOutput {
                 .collect();
 
             WasmOutput {
-                js: js,
-                ast: ast.map(|ast| format!("{:#?}", ast)),
+                js: js.map(|s| serde_wasm_bindgen::to_value(&s).unwrap()),
+                ast: ast.map(|ast| serde_wasm_bindgen::to_value(&ast).unwrap()),
                 errors,
             }
         }

@@ -17,7 +17,7 @@ pub struct CompilerOutput {
 }
 
 pub fn check(source_path: &Path) -> Vec<Diagnostic> {
-    let mut resolver_builder = ResolverBuilder::new(source_path.to_path_buf());
+    let resolver_builder = ResolverBuilder::new(source_path.to_path_buf());
     let (mut resolver, mut diagnostics) = resolver_builder.build();
 
     let files = match resolver.traverse() {
@@ -42,7 +42,7 @@ pub fn check(source_path: &Path) -> Vec<Diagnostic> {
 }
 
 pub fn compile(source_path: &Path) -> Result<CompilerOutput> {
-    let mut resolver_builder = ResolverBuilder::new(source_path.to_path_buf());
+    let resolver_builder = ResolverBuilder::new(source_path.to_path_buf());
     let (mut resolver, mut diagnostics) = resolver_builder.build();
 
     let files = match resolver.traverse() {
