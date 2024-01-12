@@ -1,8 +1,9 @@
 use crate::ast::{Expr, ExprBlock, Program, Span, Stmt};
 use crate::parse;
 use clean_path::Clean;
+use itertools::Itertools;
 use miette::Diagnostic;
-use petgraph::dot::Dot;
+use petgraph::algo::{tarjan_scc, toposort};
 use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
 use std::collections::{HashMap, HashSet};
@@ -15,7 +16,7 @@ pub struct Resolver {
     file_nodes: HashMap<PathBuf, NodeIndex>,
     visited_files: HashSet<PathBuf>,
     file_graph: Graph<PathBuf, (), Directed>,
-    errors: Vec<crate::diagnostics::Diagnostic>,
+    diagnostics: Vec<crate::diagnostics::Diagnostic>,
 }
 
 #[derive(Debug, Error, Diagnostic)]
@@ -25,21 +26,26 @@ pub enum ResolverDiagnostic {
     // TODO: Add code span if exists
     #[error("file {path} does not exist")]
     FileDoesNotExist { path: PathBuf },
+    #[error("cycle detected in dependency graph: {cycles}")]
+    CycleDetected { cycles: String },
 }
 
 impl Resolver {
     pub fn new(root_file: PathBuf) -> Self {
         let mut file_graph = Graph::new();
-        let root_idx = file_graph.add_node(root_file);
+        let root_idx = file_graph.add_node(root_file.clone());
+        let mut file_nodes = HashMap::new();
+        file_nodes.insert(root_file, root_idx);
         Self {
             stack: vec![root_idx],
             deps: Vec::new(),
-            file_nodes: HashMap::new(),
+            file_nodes,
             visited_files: HashSet::new(),
             file_graph,
-            errors: Vec::new(),
+            diagnostics: Vec::new(),
         }
     }
+
     pub fn build(&mut self) {
         while let Some(file_idx) = self.stack.pop() {
             let file = self.file_graph[file_idx].clone();
@@ -55,27 +61,69 @@ impl Resolver {
                     .or_insert_with(|| self.file_graph.add_node(dep.clone()))
                     .clone();
 
-                self.file_graph.add_edge(file_idx, dep_idx, ());
+                self.file_graph.add_edge(dep_idx, file_idx, ());
                 self.stack.push(dep_idx);
             }
             self.deps.clear();
             self.visited_files.insert(file.clone());
         }
-        println!("{:?}", Dot::new(&self.file_graph));
+    }
+    pub fn traverse(&mut self) {
+        match toposort(&self.file_graph, None) {
+            Ok(nodes) => {
+                nodes.iter().for_each(|node_idx| {
+                    println!("{}", self.file_graph[*node_idx].display());
+                });
+            }
+            Err(_) => {
+                // If only the cycle error returned good information...
+                let cycles = tarjan_scc(&self.file_graph);
+                let cycles = cycles
+                    .into_iter()
+                    .map(|cycle| {
+                        if cycle.len() == 2 {
+                            cycle
+                                .into_iter()
+                                .map(|node| self.file_graph[node].display())
+                                .join(" <-> ")
+                        } else {
+                            cycle
+                                .into_iter()
+                                .map(|node| self.file_graph[node].display())
+                                .join(" -> ")
+                        }
+                    })
+                    .join("\n");
+
+                self.diagnostics
+                    .push(crate::diagnostics::Diagnostic::Resolver(
+                        ResolverDiagnostic::CycleDetected { cycles },
+                    ))
+            }
+        }
+    }
+
+    pub fn into_diagnostics(self) -> Vec<crate::diagnostics::Diagnostic> {
+        self.diagnostics
+    }
+
+    pub fn print_graph(&self) {
+        println!("{:?}", petgraph::dot::Dot::new(&self.file_graph));
     }
 
     fn add_deps(&mut self, file: &Path) {
         let Ok(file_contents) = std::fs::read_to_string(&file) else {
-            self.errors.push(crate::diagnostics::Diagnostic::Resolver(
-                ResolverDiagnostic::FileDoesNotExist {
-                    path: file.to_path_buf(),
-                },
-            ));
+            self.diagnostics
+                .push(crate::diagnostics::Diagnostic::Resolver(
+                    ResolverDiagnostic::FileDoesNotExist {
+                        path: file.to_path_buf(),
+                    },
+                ));
             return;
         };
-        let (program, errors) = parse(&file_contents);
-        self.errors.extend(
-            errors
+        let (program, diagnostics) = parse(&file_contents);
+        self.diagnostics.extend(
+            diagnostics
                 .into_iter()
                 .map(crate::diagnostics::Diagnostic::Parse),
         );

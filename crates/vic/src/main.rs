@@ -72,6 +72,11 @@ fn run(source_path: &Path) -> Result<()> {
 fn graph(source_path: &Path) -> Result<()> {
     let mut resolver = vicuna_compiler::Resolver::new(source_path.to_path_buf());
     resolver.build();
+    resolver.traverse();
+    for diagnostic in resolver.into_diagnostics() {
+        eprintln!("{:?}", Report::new(diagnostic));
+    }
+
     Ok(())
 }
 

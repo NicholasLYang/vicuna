@@ -1,1 +1,2 @@
+import c from "./qux";
 let b = 10;
