@@ -207,8 +207,8 @@ impl ResolverBuilder {
 }
 
 impl Resolver {
-    pub fn traverse(&mut self) -> Result<Vec<NodeIndex>, ResolverDiagnostic> {
-        toposort(&self.file_graph, None).map_err(|_| {
+    pub fn traverse(&mut self) -> Result<Vec<&Path>, ResolverDiagnostic> {
+        let nodes = toposort(&self.file_graph, None).map_err(|_| {
             // If only the cycle error returned good information...
             let cycles = tarjan_scc(&self.file_graph);
             let cycles = cycles
@@ -229,7 +229,12 @@ impl Resolver {
                 .join("\n");
 
             ResolverDiagnostic::CycleDetected { cycles }
-        })
+        })?;
+
+        Ok(nodes
+            .into_iter()
+            .map(|node| &self.file_graph[node])
+            .collect())
     }
 
     #[allow(dead_code)]
@@ -241,9 +246,7 @@ impl Resolver {
         self.file_graph.node_weight(idx)
     }
 
-    pub fn remove_ast(&mut self, idx: NodeIndex) -> Option<Program> {
-        let path = &self.file_graph[idx];
-
+    pub fn remove_ast(&mut self, path: &Path) -> Option<Program> {
         self.asts.remove(path)
     }
 }

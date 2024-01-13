@@ -12,6 +12,8 @@ use crate::ast::{
     PostFix, Program, Span, Stmt, TypeDeclaration, TypeFields, TypeSig, UnaryOp, Value,
 };
 use crate::symbol_table::{SymbolTable, SymbolTableEntry};
+use camino::Utf8PathBuf;
+use clean_path::clean;
 use id_arena::{Arena, Id};
 use miette::Diagnostic;
 use std::collections::{HashMap, HashSet};
@@ -345,15 +347,28 @@ pub struct EnumSchema {
     type_parameters: Vec<Name>,
 }
 
+enum ExportKind {
+    Variable { ty: TypeId },
+    Type,
+}
+
+struct Export {
+    span: Range<usize>,
+    kind: ExportKind,
+}
+
 pub struct TypeChecker {
+    /// Previously type checked files with their exports
+    previous_files: HashMap<Utf8PathBuf, HashMap<Name, Export>>,
+    current_path: Option<Utf8PathBuf>,
     symbol_table: SymbolTable,
     type_variables: Vec<Option<TypeId>>,
     types: Arena<Type>,
     struct_schemas: Arena<StructSchema>,
     enum_schemas: Arena<EnumSchema>,
     return_type: Option<TypeId>,
-    exports: HashMap<Name, Range<usize>>,
-    pub(crate) errors: Vec<TypeDiagnostic>,
+    exports: HashMap<Name, Export>,
+    diagnostics: Vec<TypeDiagnostic>,
     i32_ty: TypeId,
     f32_ty: TypeId,
     bool_ty: TypeId,
@@ -475,6 +490,27 @@ pub enum TypeDiagnostic {
         #[label("duplicate")]
         current_definition_span: Range<usize>,
     },
+    #[error("generic types cannot be exported")]
+    GenericExport {
+        #[label]
+        span: Range<usize>,
+    },
+    #[error("cannot import in script context")]
+    ImportInScript {
+        #[label]
+        span: Range<usize>,
+    },
+    #[error("default imports are not allowed for Vicuna files, only for JavaScript")]
+    InternalDefaultImport {
+        #[label]
+        span: Range<usize>,
+    },
+    #[error("path `{path}` does not exist")]
+    InvalidImportPath {
+        path: String,
+        #[label]
+        span: Range<usize>,
+    },
 }
 
 impl TypeChecker {
@@ -490,6 +526,8 @@ impl TypeChecker {
         let js_ty = type_arena.alloc(Type::Js);
 
         Self {
+            previous_files: HashMap::new(),
+            current_path: None,
             symbol_table: SymbolTable::new(),
             type_variables: Vec::new(),
             types: type_arena,
@@ -497,7 +535,7 @@ impl TypeChecker {
             exports: HashMap::new(),
             enum_schemas: Arena::new(),
             return_type: None,
-            errors: Vec::new(),
+            diagnostics: Vec::new(),
             i32_ty,
             f32_ty,
             char_ty,
@@ -520,7 +558,7 @@ impl TypeChecker {
         }
     }
 
-    pub fn in_scope<T>(&mut self, func: impl FnOnce(&mut TypeChecker) -> Option<T>) -> Option<T> {
+    pub fn in_scope<T>(&mut self, func: impl FnOnce(&mut TypeChecker) -> T) -> T {
         self.symbol_table.enter_scope();
         let res = func(self);
         self.symbol_table.exit_scope();
@@ -541,15 +579,20 @@ impl TypeChecker {
             println!("None");
         }
         println!("errors:");
-        println!("{:?}", self.errors);
+        println!("{:?}", self.diagnostics);
     }
 
-    pub fn check(mut self, program: &Program) -> Vec<TypeDiagnostic> {
+    pub fn check(mut self, program: &Program, path: Utf8PathBuf) -> Vec<TypeDiagnostic> {
+        self.current_path = Some(path);
         debug!("checking program");
-        self.check_block(&program.statements);
+        self.in_scope(|this| this.check_block(&program.statements));
+
         #[cfg(debug_assertions)]
         self.symbol_table.assert_single_scope();
-        self.errors
+        let exports = mem::take(&mut self.exports);
+        let path = self.current_path.take().unwrap();
+        self.previous_files.insert(path, exports);
+        self.diagnostics
     }
 
     fn add_type_parameters(&mut self, type_parameters: &[String]) {
@@ -598,7 +641,7 @@ impl TypeChecker {
                 }
                 Some(SymbolTableEntry::Enum { schema_id }) => {
                     let expected = self.enum_schemas[*schema_id].type_parameters.len();
-                    self.errors.push(TypeDiagnostic::TypeArityMismatch {
+                    self.diagnostics.push(TypeDiagnostic::TypeArityMismatch {
                         expected,
                         received: type_args.len(),
                     });
@@ -606,7 +649,7 @@ impl TypeChecker {
                     None
                 }
                 Some(SymbolTableEntry::Struct { schema_id }) => {
-                    self.errors.push(TypeDiagnostic::TypeArityMismatch {
+                    self.diagnostics.push(TypeDiagnostic::TypeArityMismatch {
                         expected: self.struct_schemas[*schema_id].type_parameters.len(),
                         received: type_args.len(),
                     });
@@ -627,7 +670,7 @@ impl TypeChecker {
                     Some(self.types.alloc(Type::GenericVariable(name.0.clone())))
                 }
                 _ => {
-                    self.errors.push(TypeDiagnostic::UndefinedType(
+                    self.diagnostics.push(TypeDiagnostic::UndefinedType(
                         name.0.clone(),
                         type_sig.1.clone(),
                     ));
@@ -759,7 +802,7 @@ impl TypeChecker {
         // First pass is to add type declarations to the symbol table
         for stmt in stmts {
             if let Stmt::Type(decl) = &stmt.0 {
-                self.add_type_declaration(decl)?;
+                self.add_type_declaration(decl);
             }
         }
 
@@ -817,8 +860,6 @@ impl TypeChecker {
         for stmt in stmts {
             self.check_stmt(stmt);
         }
-
-        Some(())
     }
 
     fn check_stmt(&mut self, stmt: &Span<Stmt>) -> Option<()> {
@@ -828,7 +869,7 @@ impl TypeChecker {
                     definition_span, ..
                 }) = self.symbol_table.lookup(&name.0)
                 {
-                    self.errors.push(TypeDiagnostic::VariableShadowed {
+                    self.diagnostics.push(TypeDiagnostic::VariableShadowed {
                         previous_definition_span: definition_span.clone(),
                         current_definition_span: stmt.1.clone(),
                     });
@@ -897,7 +938,7 @@ impl TypeChecker {
                         let end_expr_ty = this.check_expr(end_expr)?;
 
                         if end_expr_ty != return_type {
-                            this.errors.push(TypeDiagnostic::TypeMismatch {
+                            this.diagnostics.push(TypeDiagnostic::TypeMismatch {
                                 expected_ty: this.p(return_type).to_string(),
                                 received_ty: this.p(end_expr_ty).to_string(),
                                 span: body.0.end_expr.as_ref().unwrap().1.clone(),
@@ -949,7 +990,7 @@ impl TypeChecker {
                             );
                         }
                         _ => {
-                            this.errors.push(TypeDiagnostic::ExpectedIterableType {
+                            this.diagnostics.push(TypeDiagnostic::ExpectedIterableType {
                                 ty: this.p(iterator_ty).to_string(),
                                 span: iterator.1.clone(),
                             });
@@ -971,7 +1012,7 @@ impl TypeChecker {
                 if let Some(return_type) = &self.return_type {
                     self.unify(ty, *return_type, stmt.1.clone());
                 } else {
-                    self.errors
+                    self.diagnostics
                         .push(TypeDiagnostic::ReturnOutsideFunction(stmt.1.clone()));
                 }
             }
@@ -1001,20 +1042,94 @@ impl TypeChecker {
                     );
                 }
             }
+            Stmt::Import {
+                ty: Span(ImportType::Internal, _),
+                default_import,
+                named_imports,
+                path,
+            } => {
+                if default_import.is_some() {
+                    self.diagnostics
+                        .push(TypeDiagnostic::InternalDefaultImport {
+                            span: stmt.1.clone(),
+                        });
+                }
+                let Some(current_path) = &self.current_path else {
+                    self.diagnostics.push(TypeDiagnostic::ImportInScript {
+                        span: stmt.1.clone(),
+                    });
+                    return;
+                };
+                let import_path: Utf8PathBuf =
+                    clean(current_path.join(&path.0)).try_into().unwrap();
+
+                let Some(exports) = self.previous_files.get(&import_path) else {
+                    self.diagnostics.push(TypeDiagnostic::InvalidImportPath {
+                        path: path.0.clone(),
+                        span: path.1.clone(),
+                    });
+                    return;
+                };
+
+                for import in named_imports {
+                    let export = exports.get(&import.0);
+                    if let Some(export) = export {
+                        match &export.kind {
+                            ExportKind::Variable { ty } => {
+                                self.symbol_table.insert(
+                                    import.0.clone(),
+                                    SymbolTableEntry::Variable {
+                                        ty: *ty,
+                                        definition_span: import.1.clone(),
+                                    },
+                                );
+                            }
+                            ExportKind::Type => todo!(),
+                        }
+                    } else {
+                        self.diagnostics.push(TypeDiagnostic::UndefinedVariable(
+                            import.0.clone(),
+                            import.1.clone(),
+                        ));
+                    }
+                }
+            }
             Stmt::Export { name } => {
-                if self.symbol_table.lookup(&name.0).is_none() {
-                    self.errors.push(TypeDiagnostic::UndefinedVariable(
+                let Some(entry) = self.symbol_table.lookup(&name.0) else {
+                    self.diagnostics.push(TypeDiagnostic::UndefinedVariable(
                         name.0.clone(),
                         name.1.clone(),
                     ));
-                }
-                if let Some(previous_definition_span) = self.exports.get(&name.0) {
-                    self.errors.push(TypeDiagnostic::DuplicateExport {
-                        previous_definition_span: previous_definition_span.clone(),
+                    return;
+                };
+
+                if let Some(previous_definition) = self.exports.get(&name.0) {
+                    self.diagnostics.push(TypeDiagnostic::DuplicateExport {
+                        previous_definition_span: previous_definition.span.clone(),
                         current_definition_span: stmt.1.clone(),
                     });
                 } else {
-                    self.exports.insert(name.0.clone(), stmt.1.clone());
+                    let kind = match entry {
+                        SymbolTableEntry::Variable { ty, .. } => ExportKind::Variable { ty: *ty },
+                        SymbolTableEntry::Enum { .. } | SymbolTableEntry::Struct { .. } => {
+                            ExportKind::Type
+                        }
+                        SymbolTableEntry::TypeVariable { .. }
+                        | SymbolTableEntry::AbstractTypeVariable => {
+                            self.diagnostics.push(TypeDiagnostic::GenericExport {
+                                span: stmt.1.clone(),
+                            });
+                            return;
+                        }
+                    };
+
+                    self.exports.insert(
+                        name.0.clone(),
+                        Export {
+                            span: stmt.1.clone(),
+                            kind,
+                        },
+                    );
                 }
             }
             Stmt::Type(_) => {
@@ -1024,9 +1139,9 @@ impl TypeChecker {
                 let Some(SymbolTableEntry::Enum { schema_id }) =
                     self.symbol_table.lookup(&module.0).cloned()
                 else {
-                    self.errors
+                    self.diagnostics
                         .push(TypeDiagnostic::NotEnum(module.0.clone(), stmt.1.clone()));
-                    return None;
+                    return;
                 };
 
                 let schema = self.enum_schemas[schema_id].clone();
@@ -1041,12 +1156,12 @@ impl TypeChecker {
                     }
                 } else {
                     let Some(variant) = schema.variants.get(&name.0) else {
-                        self.errors.push(TypeDiagnostic::UndefinedVariant {
+                        self.diagnostics.push(TypeDiagnostic::UndefinedVariant {
                             enum_name: module.0.clone(),
                             variant_name: name.0.clone(),
                             span: stmt.1.clone(),
                         });
-                        return None;
+                        return;
                     };
 
                     self.symbol_table.insert(
@@ -1057,7 +1172,6 @@ impl TypeChecker {
                     );
                 }
             }
-            Stmt::Import { .. } => todo!("internal imports not implemented yet"),
         }
 
         Some(())
@@ -1066,7 +1180,7 @@ impl TypeChecker {
     fn check_assignment(&mut self, lhs: &Span<Expr>, rhs: &Span<Expr>) -> Option<TypeId> {
         // TODO: Handle indexing and fields
         if !matches!(lhs.0, Expr::Variable(_)) {
-            self.errors
+            self.diagnostics
                 .push(TypeDiagnostic::CannotAssign(lhs.1.clone()));
             return None;
         }
@@ -1093,7 +1207,7 @@ impl TypeChecker {
                         } else if lhs_ty == self.f32_ty && rhs_ty == self.f32_ty {
                             Some(self.f32_ty)
                         } else {
-                            self.errors.push(TypeDiagnostic::TypeMismatch {
+                            self.diagnostics.push(TypeDiagnostic::TypeMismatch {
                                 expected_ty: self.p(lhs_ty).to_string(),
                                 received_ty: self.p(rhs_ty).to_string(),
                                 span: rhs.1.clone(),
@@ -1113,7 +1227,7 @@ impl TypeChecker {
                         let is_number = (lhs_ty == self.i32_ty && rhs_ty == self.i32_ty)
                             || (lhs_ty == self.f32_ty && rhs_ty == self.f32_ty);
                         if !is_number {
-                            self.errors.push(TypeDiagnostic::TypeMismatch {
+                            self.diagnostics.push(TypeDiagnostic::TypeMismatch {
                                 expected_ty: self.p(lhs_ty).to_string(),
                                 received_ty: self.p(rhs_ty).to_string(),
                                 span: rhs.1.clone(),
@@ -1152,7 +1266,7 @@ impl TypeChecker {
                 {
                     Some(*ty)
                 } else {
-                    self.errors.push(TypeDiagnostic::UndefinedVariable(
+                    self.diagnostics.push(TypeDiagnostic::UndefinedVariable(
                         name.clone(),
                         expr.1.clone(),
                     ));
@@ -1200,7 +1314,7 @@ impl TypeChecker {
                     type_parameters,
                 } = callee_ty
                 else {
-                    self.errors.push(TypeDiagnostic::NotCallable(
+                    self.diagnostics.push(TypeDiagnostic::NotCallable(
                         callee_ty.clone(),
                         callee.1.clone(),
                     ));
@@ -1208,7 +1322,7 @@ impl TypeChecker {
                 };
 
                 if args.len() != param_types.len() {
-                    self.errors.push(TypeDiagnostic::ArityMismatch(
+                    self.diagnostics.push(TypeDiagnostic::ArityMismatch(
                         param_types.len(),
                         args.len(),
                         args_span.clone(),
@@ -1265,7 +1379,7 @@ impl TypeChecker {
                     type_arguments,
                 } = lhs_ty
                 else {
-                    self.errors
+                    self.diagnostics
                         .push(TypeDiagnostic::NotStruct(lhs_ty.clone(), lhs.1.clone()));
                     return None;
                 };
@@ -1287,7 +1401,7 @@ impl TypeChecker {
                 };
 
                 let Some(field_type) = field_type else {
-                    self.errors.push(TypeDiagnostic::UndefinedField {
+                    self.diagnostics.push(TypeDiagnostic::UndefinedField {
                         struct_name: schema.name.clone(),
                         field_name: field.0.clone(),
                         span: field_span.clone(),
@@ -1315,7 +1429,7 @@ impl TypeChecker {
                 let callee_ty = &self.types[callee_ty];
 
                 if index_ty != self.i32_ty {
-                    self.errors.push(TypeDiagnostic::TypeMismatch {
+                    self.diagnostics.push(TypeDiagnostic::TypeMismatch {
                         expected_ty: "i32".to_string(),
                         received_ty: self.p(index_ty).to_string(),
                         span: index.1.clone(),
@@ -1325,7 +1439,7 @@ impl TypeChecker {
                 if let Type::Array(ty) = callee_ty {
                     Some(**ty)
                 } else {
-                    self.errors.push(TypeDiagnostic::NotArray(
+                    self.diagnostics.push(TypeDiagnostic::NotArray(
                         callee_ty.clone(),
                         callee.1.clone(),
                     ));
@@ -1336,7 +1450,7 @@ impl TypeChecker {
                 let Some(SymbolTableEntry::Struct { schema_id }) =
                     self.symbol_table.lookup(&name.0).cloned()
                 else {
-                    self.errors.push(TypeDiagnostic::UndefinedType(
+                    self.diagnostics.push(TypeDiagnostic::UndefinedType(
                         name.0.clone(),
                         expr.1.clone(),
                     ));
@@ -1363,7 +1477,7 @@ impl TypeChecker {
                 let Some(SymbolTableEntry::Enum { schema_id }) =
                     self.symbol_table.lookup(&enum_name.0).cloned()
                 else {
-                    self.errors.push(TypeDiagnostic::UndefinedType(
+                    self.diagnostics.push(TypeDiagnostic::UndefinedType(
                         enum_name.0.clone(),
                         expr.1.clone(),
                     ));
@@ -1374,7 +1488,7 @@ impl TypeChecker {
                 self.add_type_parameters(&schema.type_parameters);
 
                 let Some(variant_schema_id) = schema.variants.get(&variant_name.0) else {
-                    self.errors.push(TypeDiagnostic::UndefinedVariant {
+                    self.diagnostics.push(TypeDiagnostic::UndefinedVariant {
                         enum_name: enum_name.0.clone(),
                         variant_name: variant_name.0.clone(),
                         span: variant_name.1.clone(),
@@ -1397,7 +1511,7 @@ impl TypeChecker {
             } => {
                 let condition_ty = self.check_expr(condition)?;
                 if condition_ty != self.bool_ty {
-                    self.errors.push(TypeDiagnostic::TypeMismatch {
+                    self.diagnostics.push(TypeDiagnostic::TypeMismatch {
                         expected_ty: "bool".to_string(),
                         received_ty: self.p(condition_ty).to_string(),
                         span: condition.1.clone(),
@@ -1431,7 +1545,7 @@ impl TypeChecker {
                         } => {
                             // TODO: Handle non-enum pattern matching
                             let Type::Enum { schema_id, .. } = &self.types[expr_ty] else {
-                                self.errors.push(TypeDiagnostic::NotEnum(
+                                self.diagnostics.push(TypeDiagnostic::NotEnum(
                                     self.p(expr_ty).to_string(),
                                     case_expr.1.clone(),
                                 ));
@@ -1538,11 +1652,12 @@ impl TypeChecker {
                 }
 
                 if !missing_variants.is_empty() {
-                    self.errors.push(TypeDiagnostic::NonExhaustiveEnumMatch {
-                        enum_name: schema.name.clone(),
-                        missing_variants: missing_variants.into_iter().cloned().collect(),
-                        span: match_span,
-                    });
+                    self.diagnostics
+                        .push(TypeDiagnostic::NonExhaustiveEnumMatch {
+                            enum_name: schema.name.clone(),
+                            missing_variants: missing_variants.into_iter().cloned().collect(),
+                            span: match_span,
+                        });
                 }
             }
             _ => {
@@ -1555,7 +1670,7 @@ impl TypeChecker {
                     }
                 }
 
-                self.errors
+                self.diagnostics
                     .push(TypeDiagnostic::NonExhaustiveValueMatch { span: match_span });
             }
         }
@@ -1573,7 +1688,7 @@ impl TypeChecker {
         case_type: &mut Option<TypeId>,
     ) -> Option<()> {
         let Some(variant_schema_id) = schema.variants.get(&variant_name.0).cloned() else {
-            self.errors.push(TypeDiagnostic::UndefinedVariant {
+            self.diagnostics.push(TypeDiagnostic::UndefinedVariant {
                 enum_name: schema.name.clone(),
                 variant_name: variant_name.0.clone(),
                 span: variant_name.1.clone(),
@@ -1585,7 +1700,7 @@ impl TypeChecker {
 
         let Some(received_fields) = &fields else {
             if !variant_schema.fields.is_empty() {
-                self.errors.push(TypeDiagnostic::FieldsMismatch {
+                self.diagnostics.push(TypeDiagnostic::FieldsMismatch {
                     expected_fields: variant_schema.fields.clone(),
                     received_fields: Fields::Empty,
                     span: variant_name.1.clone(),
@@ -1613,7 +1728,7 @@ impl TypeChecker {
                 ),
             };
 
-            self.errors.push(TypeDiagnostic::FieldsMismatch {
+            self.diagnostics.push(TypeDiagnostic::FieldsMismatch {
                 expected_fields: variant_schema.fields.clone(),
                 received_fields,
                 span: variant_name.1.clone(),
@@ -1631,7 +1746,7 @@ impl TypeChecker {
                             "empty"
                         };
 
-                        this.errors.push(TypeDiagnostic::WrongPattern {
+                        this.diagnostics.push(TypeDiagnostic::WrongPattern {
                             pattern: "tuple",
                             ty,
                             span: Default::default(),
@@ -1649,7 +1764,7 @@ impl TypeChecker {
                                 },
                             );
                         } else {
-                            this.errors.push(TypeDiagnostic::UndefinedField {
+                            this.diagnostics.push(TypeDiagnostic::UndefinedField {
                                 struct_name: format!("{}::{}", enum_name.0, variant_name.0),
                                 field_name: field.0.clone(),
                                 span: field.1.clone(),
@@ -1665,7 +1780,7 @@ impl TypeChecker {
                             "empty"
                         };
 
-                        this.errors.push(TypeDiagnostic::WrongPattern {
+                        this.diagnostics.push(TypeDiagnostic::WrongPattern {
                             pattern: "named",
                             ty,
                             span: Default::default(),
@@ -1684,7 +1799,7 @@ impl TypeChecker {
                                 },
                             );
                         } else {
-                            this.errors.push(TypeDiagnostic::UndefinedField {
+                            this.diagnostics.push(TypeDiagnostic::UndefinedField {
                                 struct_name: format!("{}::{}", enum_name.0, variant_name.0),
                                 field_name: field.0.clone(),
                                 span: field.1.clone(),
@@ -1788,7 +1903,7 @@ impl TypeChecker {
         );
         let Some(SymbolTableEntry::TypeVariable { idx }) = self.symbol_table.lookup(type_var_name)
         else {
-            self.errors.push(TypeDiagnostic::UndefinedType(
+            self.diagnostics.push(TypeDiagnostic::UndefinedType(
                 type_var_name.to_string(),
                 expr_span,
             ));
@@ -1797,7 +1912,7 @@ impl TypeChecker {
 
         if let Some(instantiated_ty) = &self.type_variables[*idx] {
             if &self.types[expr_ty] != &self.types[*instantiated_ty] {
-                self.errors.push(TypeDiagnostic::TypeMismatch {
+                self.diagnostics.push(TypeDiagnostic::TypeMismatch {
                     expected_ty: self.p(*instantiated_ty).to_string(),
                     received_ty: self.p(expr_ty).to_string(),
                     span: expr_span,
@@ -1818,7 +1933,7 @@ impl TypeChecker {
         for (i, entry) in tuple_entries.iter().enumerate() {
             let expr_ty = self.check_expr(entry)?;
             let Some(expected_ty) = schema_fields.get(i) else {
-                self.errors.push(TypeDiagnostic::ArityMismatch(
+                self.diagnostics.push(TypeDiagnostic::ArityMismatch(
                     schema_fields.len(),
                     tuple_entries.len(),
                     struct_span.clone(),
@@ -1841,7 +1956,7 @@ impl TypeChecker {
         for type_param in &schema.type_parameters {
             let Some(SymbolTableEntry::TypeVariable { idx }) = self.symbol_table.lookup(type_param)
             else {
-                self.errors.push(TypeDiagnostic::UndefinedType(
+                self.diagnostics.push(TypeDiagnostic::UndefinedType(
                     type_param.clone(),
                     struct_span,
                 ));
@@ -1850,7 +1965,7 @@ impl TypeChecker {
             if let Some(type_arg) = &self.type_variables[*idx] {
                 type_arguments.push(*type_arg);
             } else {
-                self.errors.push(TypeDiagnostic::UnusedTypeParameter {
+                self.diagnostics.push(TypeDiagnostic::UnusedTypeParameter {
                     name: type_param.clone(),
                     span: struct_span,
                 });
@@ -1883,7 +1998,7 @@ impl TypeChecker {
                 },
             ) => {
                 if schema_id1 != schema_id2 {
-                    self.errors.push(TypeDiagnostic::TypeMismatch {
+                    self.diagnostics.push(TypeDiagnostic::TypeMismatch {
                         expected_ty: self.p(t1).to_string(),
                         received_ty: self.p(t2).to_string(),
                         span: span.clone(),
@@ -1909,7 +2024,7 @@ impl TypeChecker {
                 },
             ) => {
                 if schema_id1 != schema_id2 {
-                    self.errors.push(TypeDiagnostic::TypeMismatch {
+                    self.diagnostics.push(TypeDiagnostic::TypeMismatch {
                         expected_ty: self.p(t1).to_string(),
                         received_ty: self.p(t2).to_string(),
                         span: span.clone(),
@@ -1943,7 +2058,7 @@ impl TypeChecker {
             }
             (_, _) => {
                 if t1 != t2 {
-                    self.errors.push(TypeDiagnostic::TypeMismatch {
+                    self.diagnostics.push(TypeDiagnostic::TypeMismatch {
                         expected_ty: self.p(t1).to_string(),
                         received_ty: self.p(t2).to_string(),
                         span,
@@ -1965,7 +2080,7 @@ impl TypeChecker {
             let struct_type_fields = struct_schema.fields.clone();
             let literal_field_types = self.get_field_types(literal_fields);
 
-            self.errors.push(TypeDiagnostic::FieldsMismatch {
+            self.diagnostics.push(TypeDiagnostic::FieldsMismatch {
                 expected_fields: struct_type_fields,
                 received_fields: literal_field_types,
                 span: struct_span,
@@ -1978,7 +2093,7 @@ impl TypeChecker {
                 for (field_name, field_value) in literal_fields {
                     let expr_ty = self.check_expr(field_value)?;
                     let Some(expected_ty) = schema_fields.get(&field_name.0) else {
-                        self.errors.push(TypeDiagnostic::MissingField {
+                        self.diagnostics.push(TypeDiagnostic::MissingField {
                             struct_name: struct_name.to_string(),
                             field_name: field_name.0.clone(),
                             span: field_name.1.clone(),
@@ -1995,7 +2110,7 @@ impl TypeChecker {
             (Fields::Empty, FieldsSchema::Empty) => {}
             _ => {
                 let received_fields = self.get_field_types(literal_fields);
-                self.errors.push(TypeDiagnostic::FieldsMismatch {
+                self.diagnostics.push(TypeDiagnostic::FieldsMismatch {
                     expected_fields: struct_schema.fields.clone(),
                     received_fields,
                     span: struct_span,
@@ -2033,7 +2148,7 @@ mod tests {
         let expr_ty = checker.check_expr(&expr).unwrap();
 
         assert_eq!(checker.types[expr_ty], Type::I32);
-        insta::assert_debug_snapshot!(checker.errors);
+        insta::assert_debug_snapshot!(checker.diagnostics);
 
         let expr = Span(
             Expr::Binary(
@@ -2045,7 +2160,7 @@ mod tests {
         );
 
         assert_eq!(checker.check_expr(&expr), None);
-        insta::assert_debug_snapshot!(checker.errors);
+        insta::assert_debug_snapshot!(checker.diagnostics);
     }
 
     #[test]

@@ -35,7 +35,7 @@ pub fn check(source_path: &Path) -> Vec<Diagnostic> {
             continue;
         };
         let type_checker = TypeChecker::new();
-        let type_errors = type_checker.check(&ast);
+        let type_errors = type_checker.check(&ast, file);
         diagnostics.extend(type_errors.into_iter().map(Diagnostic::Type));
     }
 
