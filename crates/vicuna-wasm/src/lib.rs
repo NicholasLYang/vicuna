@@ -1,15 +1,31 @@
-use serde::{Deserialize, Serialize};
-use serde_wasm_bindgen::Error;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use vicuna_compiler::{compile, parse, CompilerOutput, Program};
+use std::path::Path;
+use vicuna_compiler::{compile_code, parse, CompilerOutput};
 use wasm_bindgen::prelude::*;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
+#[wasm_bindgen]
 pub struct WasmOutput {
-    js: Option<HashMap<PathBuf, String>>,
-    ast: Option<HashMap<PathBuf, Program>>,
+    js: Option<String>,
+    ast: Option<String>,
     errors: Vec<String>,
+}
+
+#[wasm_bindgen]
+impl WasmOutput {
+    #[wasm_bindgen(getter)]
+    pub fn js(&self) -> Option<String> {
+        self.js.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn ast(&self) -> Option<String> {
+        self.ast.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn errors(&self) -> String {
+        self.errors.join("\n")
+    }
 }
 
 #[wasm_bindgen(start)]
@@ -19,7 +35,7 @@ fn init() {
 }
 
 #[wasm_bindgen]
-pub fn run_compiler(source: &str) -> Result<JsValue, Error> {
+pub fn run_compiler(source: &str) -> WasmOutput {
     let mut errors = vec![];
     let (program, parse_errors) = parse(source);
 
@@ -28,14 +44,14 @@ pub fn run_compiler(source: &str) -> Result<JsValue, Error> {
     }
 
     let Some(program) = program else {
-        return serde_wasm_bindgen::to_value(&WasmOutput {
+        return WasmOutput {
             js: None,
             ast: None,
             errors,
-        });
+        };
     };
 
-    match compile(source) {
+    match compile_code(source) {
         Ok(CompilerOutput {
             js,
             ast,
@@ -46,11 +62,11 @@ pub fn run_compiler(source: &str) -> Result<JsValue, Error> {
                 .chain(diagnostics.into_iter().map(|d| d.to_string()))
                 .collect();
 
-            WasmOutput {
-                js: js.map(|s| serde_wasm_bindgen::to_value(&s).unwrap()),
-                ast: ast.map(|ast| serde_wasm_bindgen::to_value(&ast).unwrap()),
-                errors,
-            }
+            let js = js.map(|mut js| js.remove(Path::new("main.vc")).unwrap());
+            let ast =
+                ast.map(|mut ast| format!("{:#?}", ast.remove(Path::new("main.vc")).unwrap()));
+
+            WasmOutput { js, ast, errors }
         }
         Err(err) => WasmOutput {
             js: None,

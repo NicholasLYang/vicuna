@@ -232,6 +232,7 @@ impl Resolver {
         })
     }
 
+    #[allow(dead_code)]
     pub fn print_graph(&self) {
         println!("{:?}", petgraph::dot::Dot::new(&self.file_graph));
     }
