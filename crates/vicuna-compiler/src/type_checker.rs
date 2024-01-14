@@ -860,6 +860,8 @@ impl TypeChecker {
         for stmt in stmts {
             self.check_stmt(stmt);
         }
+
+        Some(())
     }
 
     fn check_stmt(&mut self, stmt: &Span<Stmt>) -> Option<()> {
@@ -1058,7 +1060,7 @@ impl TypeChecker {
                     self.diagnostics.push(TypeDiagnostic::ImportInScript {
                         span: stmt.1.clone(),
                     });
-                    return;
+                    return Some(());
                 };
                 let import_path: Utf8PathBuf =
                     clean(current_path.join(&path.0)).try_into().unwrap();
@@ -1068,7 +1070,7 @@ impl TypeChecker {
                         path: path.0.clone(),
                         span: path.1.clone(),
                     });
-                    return;
+                    return Some(());
                 };
 
                 for import in named_imports {
@@ -1100,7 +1102,7 @@ impl TypeChecker {
                         name.0.clone(),
                         name.1.clone(),
                     ));
-                    return;
+                    return Some(());
                 };
 
                 if let Some(previous_definition) = self.exports.get(&name.0) {
@@ -1119,7 +1121,7 @@ impl TypeChecker {
                             self.diagnostics.push(TypeDiagnostic::GenericExport {
                                 span: stmt.1.clone(),
                             });
-                            return;
+                            return Some(());
                         }
                     };
 
@@ -1141,7 +1143,7 @@ impl TypeChecker {
                 else {
                     self.diagnostics
                         .push(TypeDiagnostic::NotEnum(module.0.clone(), stmt.1.clone()));
-                    return;
+                    return Some(());
                 };
 
                 let schema = self.enum_schemas[schema_id].clone();
@@ -1161,7 +1163,7 @@ impl TypeChecker {
                             variant_name: name.0.clone(),
                             span: stmt.1.clone(),
                         });
-                        return;
+                        return Some(());
                     };
 
                     self.symbol_table.insert(

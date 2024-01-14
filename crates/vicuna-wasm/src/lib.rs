@@ -1,4 +1,4 @@
-use std::path::Path;
+use camino::Utf8Path;
 use vicuna_compiler::{compile_code, parse, CompilerOutput};
 use wasm_bindgen::prelude::*;
 
@@ -62,9 +62,9 @@ pub fn run_compiler(source: &str) -> WasmOutput {
                 .chain(diagnostics.into_iter().map(|d| d.to_string()))
                 .collect();
 
-            let js = js.map(|mut js| js.remove(Path::new("main.vc")).unwrap());
+            let js = js.map(|mut js| js.remove(Utf8Path::new("main.vc")).unwrap());
             let ast =
-                ast.map(|mut ast| format!("{:#?}", ast.remove(Path::new("main.vc")).unwrap()));
+                ast.map(|mut ast| format!("{:#?}", ast.remove(Utf8Path::new("main.vc")).unwrap()));
 
             WasmOutput { js, ast, errors }
         }

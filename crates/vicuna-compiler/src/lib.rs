@@ -6,6 +6,7 @@ mod parser;
 mod resolver;
 mod symbol_table;
 mod type_checker;
+mod utils;
 
 pub use ast::Program;
 pub use compiler::{check, compile, compile_code, CompilerOutput};

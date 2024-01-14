@@ -5,19 +5,19 @@ use crate::parse;
 use crate::resolver::ResolverBuilder;
 use crate::type_checker::TypeChecker;
 use anyhow::Result;
+use camino::{Utf8Path, Utf8PathBuf};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct CompilerOutput {
     /// The JavaScript output for each file
-    pub js: Option<HashMap<PathBuf, String>>,
+    pub js: Option<HashMap<Utf8PathBuf, String>>,
     /// The AST for each file
-    pub ast: Option<HashMap<PathBuf, Program>>,
+    pub ast: Option<HashMap<Utf8PathBuf, Program>>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
-pub fn check(source_path: &Path) -> Vec<Diagnostic> {
+pub fn check(source_path: &Utf8Path) -> Vec<Diagnostic> {
     let resolver_builder = ResolverBuilder::new(source_path.to_path_buf());
     let (mut resolver, mut diagnostics) = resolver_builder.build();
 
@@ -31,11 +31,11 @@ pub fn check(source_path: &Path) -> Vec<Diagnostic> {
     };
 
     for file in files {
-        let Some(ast) = resolver.remove_ast(file) else {
+        let Some(ast) = resolver.remove_ast(&file) else {
             continue;
         };
         let type_checker = TypeChecker::new();
-        let type_errors = type_checker.check(&ast, file);
+        let type_errors = type_checker.check(&ast, file.to_path_buf());
         diagnostics.extend(type_errors.into_iter().map(Diagnostic::Type));
     }
 
@@ -65,8 +65,8 @@ pub fn compile_code(code: &str) -> Result<CompilerOutput> {
     let mut output = Vec::new();
     let mut js_backend = JsBackend::new(&mut output);
     js_backend.emit_program(&program)?;
-    js.insert(PathBuf::from("main.vc"), String::from_utf8(output)?);
-    asts.insert(PathBuf::from("main.vc"), program);
+    js.insert(Utf8PathBuf::from("main.vc"), String::from_utf8(output)?);
+    asts.insert(Utf8PathBuf::from("main.vc"), program);
 
     Ok(CompilerOutput {
         js: Some(js),
@@ -75,7 +75,7 @@ pub fn compile_code(code: &str) -> Result<CompilerOutput> {
     })
 }
 
-pub fn compile(source_path: &Path) -> Result<CompilerOutput> {
+pub fn compile(source_path: &Utf8Path) -> Result<CompilerOutput> {
     let resolver_builder = ResolverBuilder::new(source_path.to_path_buf());
     let (mut resolver, mut diagnostics) = resolver_builder.build();
 
@@ -95,20 +95,17 @@ pub fn compile(source_path: &Path) -> Result<CompilerOutput> {
     let mut js = HashMap::new();
     let mut asts = HashMap::new();
     for file in files {
-        let Some(ast) = resolver.remove_ast(file) else {
+        let Some(ast) = resolver.remove_ast(&file) else {
             continue;
         };
         let type_checker = TypeChecker::new();
-        let type_errors = type_checker.check(&ast);
+        let type_errors = type_checker.check(&ast, file.to_path_buf());
         diagnostics.extend(type_errors.into_iter().map(Diagnostic::Type));
         let mut output = Vec::new();
         let mut js_backend = JsBackend::new(&mut output);
         js_backend.emit_program(&ast)?;
-        let Some(path) = resolver.get_path(file) else {
-            continue;
-        };
-        js.insert(path.clone(), String::from_utf8(output)?);
-        asts.insert(path.clone(), ast);
+        js.insert(file.to_path_buf(), String::from_utf8(output)?);
+        asts.insert(file.to_path_buf(), ast);
     }
 
     Ok(CompilerOutput {

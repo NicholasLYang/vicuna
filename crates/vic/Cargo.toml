@@ -10,6 +10,7 @@ description = "CLI for the Vicuna programming language"
 
 [dependencies]
 anyhow = { workspace = true }
+camino = "1.1.6"
 clap = { version = "4.2.3", features = ["derive"] }
 colored = "2.0.4"
 miette = { version = "5.8.0", features = ["fancy"] }

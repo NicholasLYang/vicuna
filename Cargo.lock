@@ -910,6 +910,7 @@ name = "vic"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "camino",
  "clap",
  "colored",
  "miette",
@@ -943,6 +944,7 @@ name = "vicuna-runtime"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "camino",
  "which",
 ]
 
@@ -950,6 +952,7 @@ dependencies = [
 name = "vicuna-wasm"
 version = "0.1.1"
 dependencies = [
+ "camino",
  "console_error_panic_hook",
  "miette",
  "serde",

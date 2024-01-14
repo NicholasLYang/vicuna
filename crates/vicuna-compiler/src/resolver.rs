@@ -1,28 +1,28 @@
 use crate::ast::{Expr, ExprBlock, Program, Span, Stmt};
 use crate::parse;
-use clean_path::Clean;
+use crate::utils::clean;
+use camino::{Utf8Path, Utf8PathBuf};
 use itertools::Itertools;
 use miette::Diagnostic;
 use petgraph::algo::{tarjan_scc, toposort};
 use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 pub struct ResolverBuilder {
     stack: Vec<NodeIndex>,
-    deps: Vec<PathBuf>,
-    file_nodes: HashMap<PathBuf, NodeIndex>,
-    asts: HashMap<PathBuf, Program>,
-    visited_files: HashSet<PathBuf>,
-    file_graph: Graph<PathBuf, (), Directed>,
+    deps: Vec<Utf8PathBuf>,
+    file_nodes: HashMap<Utf8PathBuf, NodeIndex>,
+    asts: HashMap<Utf8PathBuf, Program>,
+    visited_files: HashSet<Utf8PathBuf>,
+    file_graph: Graph<Utf8PathBuf, (), Directed>,
     diagnostics: Vec<crate::diagnostics::Diagnostic>,
 }
 
 pub(crate) struct Resolver {
-    file_graph: Graph<PathBuf, (), Directed>,
-    asts: HashMap<PathBuf, Program>,
+    file_graph: Graph<Utf8PathBuf, (), Directed>,
+    asts: HashMap<Utf8PathBuf, Program>,
 }
 
 #[derive(Debug, Error, Diagnostic)]
@@ -31,13 +31,13 @@ pub enum ResolverDiagnostic {
     Io(#[from] std::io::Error),
     // TODO: Add code span if exists
     #[error("file {path} does not exist")]
-    FileDoesNotExist { path: PathBuf },
+    FileDoesNotExist { path: Utf8PathBuf },
     #[error("cycle detected in dependency graph: {cycles}")]
     CycleDetected { cycles: String },
 }
 
 impl ResolverBuilder {
-    pub fn new(root_file: PathBuf) -> Self {
+    pub fn new(root_file: Utf8PathBuf) -> Self {
         let mut file_graph = Graph::new();
         let root_idx = file_graph.add_node(root_file.clone());
         let mut file_nodes = HashMap::new();
@@ -83,7 +83,7 @@ impl ResolverBuilder {
         (resolver, self.diagnostics)
     }
 
-    fn add_deps(&mut self, file: &Path) {
+    fn add_deps(&mut self, file: &Utf8Path) {
         let Ok(file_contents) = std::fs::read_to_string(&file) else {
             self.diagnostics
                 .push(crate::diagnostics::Diagnostic::Resolver(
@@ -104,18 +104,18 @@ impl ResolverBuilder {
         self.asts.insert(file.to_path_buf(), program);
     }
 
-    fn get_imports_in_program(&mut self, current_path: &Path, program: &Program) {
+    fn get_imports_in_program(&mut self, current_path: &Utf8Path, program: &Program) {
         for stmt in &program.statements {
             self.get_imports_in_stmt(current_path, stmt);
         }
     }
 
-    fn get_imports_in_stmt(&mut self, current_path: &Path, stmt: &Span<Stmt>) {
+    fn get_imports_in_stmt(&mut self, current_path: &Utf8Path, stmt: &Span<Stmt>) {
         match &stmt.0 {
             Stmt::Import { path, .. } => {
                 let mut import_path = current_path.parent().unwrap().join(&path.0);
                 import_path.set_extension("vc");
-                self.deps.push(import_path.clean());
+                self.deps.push(clean(&import_path));
             }
             Stmt::Let(_, expr) => self.get_imports_in_expr(current_path, expr),
             Stmt::Expr(expr) => {
@@ -153,7 +153,7 @@ impl ResolverBuilder {
         }
     }
 
-    fn get_imports_in_expr(&mut self, current_path: &Path, expr: &Span<Expr>) {
+    fn get_imports_in_expr(&mut self, current_path: &Utf8Path, expr: &Span<Expr>) {
         match &expr.0 {
             Expr::PostFix(expr, _) => {
                 self.get_imports_in_expr(current_path, expr);
@@ -196,7 +196,7 @@ impl ResolverBuilder {
         }
     }
 
-    fn get_imports_in_expr_block(&mut self, current_path: &Path, expr_block: &Span<ExprBlock>) {
+    fn get_imports_in_expr_block(&mut self, current_path: &Utf8Path, expr_block: &Span<ExprBlock>) {
         for stmt in &expr_block.0.stmts {
             self.get_imports_in_stmt(current_path, stmt);
         }
@@ -207,7 +207,7 @@ impl ResolverBuilder {
 }
 
 impl Resolver {
-    pub fn traverse(&mut self) -> Result<Vec<&Path>, ResolverDiagnostic> {
+    pub fn traverse(&mut self) -> Result<Vec<Utf8PathBuf>, ResolverDiagnostic> {
         let nodes = toposort(&self.file_graph, None).map_err(|_| {
             // If only the cycle error returned good information...
             let cycles = tarjan_scc(&self.file_graph);
@@ -217,12 +217,12 @@ impl Resolver {
                     if cycle.len() == 2 {
                         cycle
                             .into_iter()
-                            .map(|node| self.file_graph[node].display())
+                            .map(|node| self.file_graph[node].as_path())
                             .join(" <-> ")
                     } else {
                         cycle
                             .into_iter()
-                            .map(|node| self.file_graph[node].display())
+                            .map(|node| self.file_graph[node].as_path())
                             .join(" -> ")
                     }
                 })
@@ -233,7 +233,7 @@ impl Resolver {
 
         Ok(nodes
             .into_iter()
-            .map(|node| &self.file_graph[node])
+            .map(|node| self.file_graph[node].clone())
             .collect())
     }
 
@@ -242,11 +242,7 @@ impl Resolver {
         println!("{:?}", petgraph::dot::Dot::new(&self.file_graph));
     }
 
-    pub fn get_path(&self, idx: NodeIndex) -> Option<&PathBuf> {
-        self.file_graph.node_weight(idx)
-    }
-
-    pub fn remove_ast(&mut self, path: &Path) -> Option<Program> {
+    pub fn remove_ast(&mut self, path: &Utf8Path) -> Option<Program> {
         self.asts.remove(path)
     }
 }
