@@ -349,7 +349,8 @@ pub struct EnumSchema {
 
 enum ExportKind {
     Variable { ty: TypeId },
-    Type,
+    Struct { schema: StructSchemaId },
+    Enum { schema: EnumSchemaId },
 }
 
 struct Export {
@@ -1086,7 +1087,18 @@ impl TypeChecker {
                                     },
                                 );
                             }
-                            ExportKind::Type => todo!(),
+                            ExportKind::Struct { schema } => {
+                                self.symbol_table.insert(
+                                    import.0.clone(),
+                                    SymbolTableEntry::Struct { schema_id: *schema },
+                                );
+                            }
+                            ExportKind::Enum { schema } => {
+                                self.symbol_table.insert(
+                                    import.0.clone(),
+                                    SymbolTableEntry::Enum { schema_id: *schema },
+                                );
+                            }
                         }
                     } else {
                         self.diagnostics.push(TypeDiagnostic::UndefinedVariable(
@@ -1113,8 +1125,11 @@ impl TypeChecker {
                 } else {
                     let kind = match entry {
                         SymbolTableEntry::Variable { ty, .. } => ExportKind::Variable { ty: *ty },
-                        SymbolTableEntry::Enum { .. } | SymbolTableEntry::Struct { .. } => {
-                            ExportKind::Type
+                        SymbolTableEntry::Enum { schema_id } => {
+                            ExportKind::Enum { schema: *schema_id }
+                        }
+                        SymbolTableEntry::Struct { schema_id } => {
+                            ExportKind::Struct { schema: *schema_id }
                         }
                         SymbolTableEntry::TypeVariable { .. }
                         | SymbolTableEntry::AbstractTypeVariable => {
