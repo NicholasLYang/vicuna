@@ -32,12 +32,12 @@ fn build(source_path: &Utf8Path) -> Result<Utf8PathBuf> {
         .ok_or(anyhow!("could not run due to compilation errors"))?;
 
     for (path, output) in js {
-        let output_path = path.with_extension("v.js");
-        fs::write(path, output)?;
+        let output_path = path.with_extension("v.mjs");
+        fs::write(&output_path, output)?;
         println!("{} {}", "Emitted".blue().bold(), output_path);
     }
 
-    Ok(source_path.with_extension("v.js"))
+    Ok(source_path.with_extension("v.mjs"))
 }
 
 fn run(source_path: &Utf8Path) -> Result<()> {
