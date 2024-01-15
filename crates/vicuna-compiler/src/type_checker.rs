@@ -583,7 +583,15 @@ impl TypeChecker {
         println!("{:?}", self.diagnostics);
     }
 
-    pub fn check(mut self, program: &Program, path: Utf8PathBuf) -> Vec<TypeDiagnostic> {
+    pub fn check_stdlib(&mut self, program: &Program) {
+        self.check_block(&program.statements);
+        #[cfg(debug_assertions)]
+        self.symbol_table.assert_single_scope();
+        #[cfg(debug_assertions)]
+        assert!(self.diagnostics.is_empty());
+    }
+
+    pub fn check(&mut self, program: &Program, path: Utf8PathBuf) -> Vec<TypeDiagnostic> {
         self.current_path = Some(path);
         debug!("checking program");
         self.in_scope(|this| this.check_block(&program.statements));
@@ -593,7 +601,9 @@ impl TypeChecker {
         let exports = mem::take(&mut self.exports);
         let path = self.current_path.take().unwrap();
         self.previous_files.insert(path, exports);
-        self.diagnostics
+        let diagnostics = mem::take(&mut self.diagnostics);
+
+        diagnostics
     }
 
     fn add_type_parameters(&mut self, type_parameters: &[String]) {

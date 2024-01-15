@@ -1,0 +1,13 @@
+fn is_some<T>(a: Option<T>) -> bool {
+    match a {
+        Option::Some(a) => {
+          true
+        },
+        Option::None => {
+          false
+        }
+    }
+}
+
+print(is_some(Option::Some(1)));
+print(is_some(Option::None));

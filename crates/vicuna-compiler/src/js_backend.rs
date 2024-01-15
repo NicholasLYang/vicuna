@@ -100,26 +100,13 @@ impl<T: Write> JsBackend<T> {
                     }
                 }
                 writeln!(self.output, ") {{")?;
-                for stmt in &body.0.stmts {
-                    self.emit_stmt(stmt)?;
-                }
 
                 let old_expression_block_state = mem::replace(
                     &mut self.expression_block_state,
                     Some(ExprBlockState::Return),
                 );
 
-                match body.0.end_expr.as_deref() {
-                    Some(block_expr @ Span(Expr::If { .. } | Expr::Match { .. }, _)) => {
-                        self.emit_expr(block_expr)?;
-                    }
-                    Some(end_expr) => {
-                        self.output.write_all(b"return ")?;
-                        self.emit_expr(end_expr)?;
-                        self.output.write_all(b";\n")?;
-                    }
-                    _ => {}
-                }
+                self.emit_expression_block(body)?;
 
                 self.expression_block_state = old_expression_block_state;
 
@@ -504,14 +491,11 @@ impl<T: Write> JsBackend<T> {
         Ok(())
     }
 
-    fn emit_expression_block(&mut self, block: &Span<ExprBlock>) -> Result<()> {
-        for stmt in &block.0.stmts {
-            self.emit_stmt(stmt)?;
-        }
-        match block.0.end_expr.as_deref() {
+    fn emit_end_expr(&mut self, end_expr: Option<&Span<Expr>>) -> Result<()> {
+        match end_expr.as_deref() {
             // If the end expression is an if expression, we don't bind or return,
             // and let the if expression determine that itself.
-            Some(if_expr @ Span(Expr::If { .. }, _)) => {
+            Some(if_expr @ Span(Expr::If { .. } | Expr::Match { .. }, _)) => {
                 self.emit_expr(if_expr)?;
             }
             Some(end_expr) => {
@@ -538,6 +522,31 @@ impl<T: Write> JsBackend<T> {
             }
             _ => {}
         }
+
+        Ok(())
+    }
+
+    fn emit_expression_block(&mut self, block: &Span<ExprBlock>) -> Result<()> {
+        // This is an annoying little hack around an ambiguity in the parser, where an if or match expression
+        // will get parsed as an expression statement and not an end expression.
+        if block.0.end_expr.is_none() {
+            if let Some(Span(Stmt::Expr(expr @ Span(Expr::If { .. } | Expr::Match { .. }, _)), _)) =
+                block.0.stmts.last()
+            {
+                for stmt in &block.0.stmts[0..block.0.stmts.len() - 1] {
+                    self.emit_stmt(stmt)?;
+                }
+
+                self.emit_end_expr(Some(expr))?;
+                return Ok(());
+            }
+        }
+
+        for stmt in &block.0.stmts {
+            self.emit_stmt(stmt)?;
+        }
+
+        self.emit_end_expr(block.0.end_expr.as_deref())?;
 
         Ok(())
     }

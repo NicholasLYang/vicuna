@@ -1,0 +1,13 @@
+enum Result<T, E> {
+  Ok(T),
+  Err(E)
+}
+
+export Result;
+
+enum Option<T> {
+  Some(T),
+  None
+}
+
+export Option;

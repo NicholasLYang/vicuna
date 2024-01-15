@@ -17,6 +17,16 @@ pub struct CompilerOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+fn add_stdlib(type_checker: &mut TypeChecker) {
+    let stdlib_text = include_str!("../../../stdlib/lib.vc");
+    let (stdlib, stdlib_diagnostics) = parse(stdlib_text);
+    #[cfg(debug_assertions)]
+    assert!(stdlib_diagnostics.is_empty());
+    let stdlib = stdlib.unwrap();
+
+    type_checker.check_stdlib(&stdlib);
+}
+
 pub fn check(source_path: &Utf8Path) -> Vec<Diagnostic> {
     let resolver_builder = ResolverBuilder::new(source_path.to_path_buf());
     let (mut resolver, mut diagnostics) = resolver_builder.build();
@@ -30,11 +40,13 @@ pub fn check(source_path: &Utf8Path) -> Vec<Diagnostic> {
         }
     };
 
+    let mut type_checker = TypeChecker::new();
+    add_stdlib(&mut type_checker);
+
     for file in files {
         let Some(ast) = resolver.remove_ast(&file) else {
             continue;
         };
-        let type_checker = TypeChecker::new();
         let type_errors = type_checker.check(&ast, file.to_path_buf());
         diagnostics.extend(type_errors.into_iter().map(Diagnostic::Type));
     }
@@ -94,11 +106,12 @@ pub fn compile(source_path: &Utf8Path) -> Result<CompilerOutput> {
 
     let mut js = HashMap::new();
     let mut asts = HashMap::new();
+    let mut type_checker = TypeChecker::new();
+    add_stdlib(&mut type_checker);
     for file in files {
         let Some(ast) = resolver.remove_ast(&file) else {
             continue;
         };
-        let type_checker = TypeChecker::new();
         let type_errors = type_checker.check(&ast, file.to_path_buf());
         diagnostics.extend(type_errors.into_iter().map(Diagnostic::Type));
         let mut output = Vec::new();

@@ -1,3 +1,5 @@
+//! Resolves the imports and sorts the files in topological order.
+//! Eventually should handle some degree of circular imports.
 use crate::ast::{Expr, ExprBlock, Program, Span, Stmt};
 use crate::parse;
 use crate::utils::clean;
@@ -40,6 +42,7 @@ impl ResolverBuilder {
     pub fn new(root_file: Utf8PathBuf) -> Self {
         let mut file_graph = Graph::new();
         let root_idx = file_graph.add_node(root_file.clone());
+
         let mut file_nodes = HashMap::new();
         file_nodes.insert(root_file, root_idx);
         Self {
