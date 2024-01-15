@@ -25,6 +25,7 @@ fn print_diagnostics(diagnostics: Vec<Diagnostic>) {
 
 fn build(source_path: &Utf8Path) -> Result<Utf8PathBuf> {
     let output = vicuna_compiler::compile(&source_path)?;
+    print_diagnostics(output.diagnostics);
     println!("{} {}", "Compiled".blue().bold(), source_path);
 
     let js = output

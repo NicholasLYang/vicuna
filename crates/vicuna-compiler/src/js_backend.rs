@@ -527,21 +527,6 @@ impl<T: Write> JsBackend<T> {
     }
 
     fn emit_expression_block(&mut self, block: &Span<ExprBlock>) -> Result<()> {
-        // This is an annoying little hack around an ambiguity in the parser, where an if or match expression
-        // will get parsed as an expression statement and not an end expression.
-        if block.0.end_expr.is_none() {
-            if let Some(Span(Stmt::Expr(expr @ Span(Expr::If { .. } | Expr::Match { .. }, _)), _)) =
-                block.0.stmts.last()
-            {
-                for stmt in &block.0.stmts[0..block.0.stmts.len() - 1] {
-                    self.emit_stmt(stmt)?;
-                }
-
-                self.emit_end_expr(Some(expr))?;
-                return Ok(());
-            }
-        }
-
         for stmt in &block.0.stmts {
             self.emit_stmt(stmt)?;
         }

@@ -59,7 +59,9 @@ impl ResolverBuilder {
     pub fn build(mut self) -> (Resolver, Vec<crate::diagnostics::Diagnostic>) {
         while let Some(file_idx) = self.stack.pop() {
             let file = self.file_graph[file_idx].clone();
+            println!("file: {}", file);
             if self.visited_files.contains(&file) {
+                println!("continue");
                 continue;
             }
             self.add_deps(&file);

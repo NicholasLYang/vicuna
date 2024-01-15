@@ -94,6 +94,7 @@ impl Foo for i32 {
 - Figure out modules and standard library
 - Maybe add a way to call JS?
 - Add type checker output printing/playground
+- Fix ambiguity around end expressions and expression statements
 - ~~Figure out how tuple enums work (should we bite the bullet and use type checker information?)~~
     - ~~Or define functions that produce an enum representation?~~
     - Ended up defining functions
@@ -109,5 +110,3 @@ which doesn't give any sort of info about the type itself, and is more a syntact
 representation. Perhaps it should be a more sophisticated struct/enum type with type
 substitutions.
 
-
-  

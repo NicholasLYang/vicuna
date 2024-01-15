@@ -6,7 +6,11 @@ enum Token {
   Integer(i32)
 }
 
-fn tokenize(input: string) {
+enum Error {
+  InvalidCharacter { c: char }
+}
+
+fn tokenize(input: string) -> Result<Token[], Error> {
   let out = [];
   for s in input {
        match s {
@@ -27,7 +31,7 @@ fn tokenize(input: string) {
                 print("integer found");
              }
           }
-       }
+       };
   }
 
   print(out);

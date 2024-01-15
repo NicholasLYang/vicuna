@@ -238,6 +238,7 @@ pub enum TypeSig {
     I32,
     F32,
     String,
+    Char,
     Bool,
     Array(Box<Span<TypeSig>>),
     Named(Span<String>, Vec<Span<TypeSig>>),

@@ -621,6 +621,7 @@ impl TypeChecker {
             TypeSig::F32 => Some(self.f32_ty),
             TypeSig::Bool => Some(self.bool_ty),
             TypeSig::String => Some(self.string_ty),
+            TypeSig::Char => Some(self.char_ty),
             TypeSig::Array(ty) => {
                 let ty = self.check_type_sig(ty)?;
                 Some(self.types.alloc(Type::Array(Box::new(ty))))

@@ -319,27 +319,28 @@ fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseDiagnostic>
             .then(just(']').padded())
             .map_with_span(Span);
 
-        just("i32")
-            .padded()
-            .to(TypeSig::I32)
-            .or(just("f32").padded().to(TypeSig::F32))
-            .or(just("string").padded().to(TypeSig::String))
-            .or(just("bool").padded().to(TypeSig::Bool))
-            .or(ident()
+        choice((
+            just("i32").padded().to(TypeSig::I32),
+            just("f32").padded().to(TypeSig::F32),
+            just("string").padded().to(TypeSig::String),
+            just("bool").padded().to(TypeSig::Bool),
+            just("char").padded().to(TypeSig::Char),
+            ident()
                 .then(
                     type_sig
                         .separated_by(just(','))
                         .delimited_by(just('<'), just('>')),
                 )
-                .map(|(name, args)| TypeSig::Named(name, args)))
-            .or(ident().map(|name| TypeSig::Named(name, vec![])))
-            .map_with_span(Span)
-            .then(array.repeated())
-            .foldl(|ty, array| {
-                let range = (ty.1.start())..(array.1.end());
+                .map(|(name, args)| TypeSig::Named(name, args)),
+            ident().map(|name| TypeSig::Named(name, vec![])),
+        ))
+        .map_with_span(Span)
+        .then(array.repeated())
+        .foldl(|ty, array| {
+            let range = (ty.1.start())..(array.1.end());
 
-                Span(TypeSig::Array(Box::new(ty)), range)
-            })
+            Span(TypeSig::Array(Box::new(ty)), range)
+        })
     })
 }
 
@@ -724,7 +725,9 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseDiagnostic> {
             type_declaration,
             use_stmt,
             export_stmt,
-            match_expression.map_with_span(|expr, span| Span(Stmt::Expr(expr), span)),
+            match_expression
+                .then_ignore(just_padded(';'))
+                .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)),
             expression()
                 .then_ignore(just_padded(';'))
                 .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)),
