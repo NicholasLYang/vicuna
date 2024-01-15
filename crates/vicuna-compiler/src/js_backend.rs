@@ -255,7 +255,15 @@ impl<T: Write> JsBackend<T> {
                 self.output.write_all(b"\";\n")?;
             }
             // TODO: Add TypeScript type generation
-            Stmt::Type(_) => {}
+            Stmt::Type(TypeDeclaration::Struct { name, .. }) => {
+                self.output.write_all(b"// struct ")?;
+                self.output.write_all(name.0.as_bytes())?;
+                self.output.write_all(b"\n")?;
+                self.output.write_all(b"const ")?;
+                self.output.write_all(name.0.as_bytes())?;
+                // TODO: Figure out a runtime value for a type
+                self.output.write_all(b" = {};\n")?;
+            }
             Stmt::Use { .. } => {}
         }
         Ok(())
