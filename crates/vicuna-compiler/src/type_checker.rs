@@ -2193,7 +2193,7 @@ mod tests {
 
     #[test]
     fn test_variable_scopes() {
-        let checker = TypeChecker::new();
+        let mut checker = TypeChecker::new();
         let program = parse_program(
             "
         let x = 1;
@@ -2202,9 +2202,9 @@ mod tests {
         z + y;",
         );
 
-        insta::assert_debug_snapshot!(checker.check(&program));
+        insta::assert_debug_snapshot!(checker.check(&program, Utf8PathBuf::from("foo.vc")));
 
-        let checker = TypeChecker::new();
+        let mut checker = TypeChecker::new();
         let program = parse_program(
             "
         let x = 1;
@@ -2214,12 +2214,12 @@ mod tests {
         ",
         );
 
-        insta::assert_debug_snapshot!(checker.check(&program))
+        insta::assert_debug_snapshot!(checker.check(&program, Utf8PathBuf::from("foo.vc")))
     }
 
     #[test]
     fn test_function_hoisting() {
-        let checker = TypeChecker::new();
+        let mut checker = TypeChecker::new();
         let program = parse_program(
             "
         fn f() -> i32 { 1 }
@@ -2227,11 +2227,11 @@ mod tests {
         ",
         );
 
-        insta::assert_debug_snapshot!(checker.check(&program));
+        insta::assert_debug_snapshot!(checker.check(&program, Utf8PathBuf::from("foo.vc")));
 
-        let checker = TypeChecker::new();
+        let mut checker = TypeChecker::new();
         let program = parse_program("let x = f();");
 
-        insta::assert_debug_snapshot!(checker.check(&program));
+        insta::assert_debug_snapshot!(checker.check(&program, Utf8PathBuf::from("foo.vc")));
     }
 }
