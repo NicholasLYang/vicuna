@@ -1,0 +1,3 @@
+let foo = 5;
+export foo;
+export foo;

@@ -1,0 +1,2 @@
+let c = 10;
+export c;

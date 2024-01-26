@@ -1,7 +1,8 @@
-use miette::Report;
-use vicuna_compiler::{compile, parse, CompilerOutput, Errors};
+use camino::Utf8Path;
+use vicuna_compiler::{compile_code, parse, CompilerOutput};
 use wasm_bindgen::prelude::*;
 
+#[derive(Debug)]
 #[wasm_bindgen]
 pub struct WasmOutput {
     js: Option<String>,
@@ -50,31 +51,22 @@ pub fn run_compiler(source: &str) -> WasmOutput {
         };
     };
 
-    match compile(source) {
+    match compile_code(source) {
         Ok(CompilerOutput {
             js,
-            errors:
-                Errors {
-                    parse_errors,
-                    type_errors,
-                },
             ast,
+            diagnostics,
         }) => {
-            let errors = parse_errors
+            let errors = errors
                 .into_iter()
-                .map(|e| e.to_string())
-                .chain(
-                    type_errors
-                        .into_iter()
-                        .map(|e| format!("{:?}", Report::new(e))),
-                )
+                .chain(diagnostics.into_iter().map(|d| d.to_string()))
                 .collect();
 
-            WasmOutput {
-                js: Some(js),
-                ast: Some(format!("{:#?}", ast)),
-                errors,
-            }
+            let js = js.map(|mut js| js.remove(Utf8Path::new("main.vc")).unwrap());
+            let ast =
+                ast.map(|mut ast| format!("{:#?}", ast.remove(Utf8Path::new("main.vc")).unwrap()));
+
+            WasmOutput { js, ast, errors }
         }
         Err(err) => WasmOutput {
             js: None,

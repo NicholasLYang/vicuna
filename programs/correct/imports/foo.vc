@@ -1,0 +1,4 @@
+import { a } from "./bar";
+import { b } from "./baz";
+print(a);
+print(b);

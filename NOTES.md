@@ -88,6 +88,16 @@ impl Foo for i32 {
 - Add completeness checking for pattern matching
 - ~~Add tuple enum variants~~
 - ~~Add empty enum variants~~
+- Add ranges (1..2 or 1.to(2))
+- Add closures and iterators
+- Error handling
+- Figure out modules and standard library
+- Maybe add a way to call JS?
+- Add type checker output printing/playground
+- Fix ambiguity around end expressions and expression statements
+- ~~Figure out how tuple enums work (should we bite the bullet and use type checker information?)~~
+    - ~~Or define functions that produce an enum representation?~~
+    - Ended up defining functions
 
 # Consolidate Structs and Emums
 
@@ -100,9 +110,3 @@ which doesn't give any sort of info about the type itself, and is more a syntact
 representation. Perhaps it should be a more sophisticated struct/enum type with type
 substitutions.
 
-# TODO:
-- Add type checker output printing/playground
-- ~~Figure out how tuple enums work (should we bite the bullet and use type checker information?)~~
-  - ~~Or define functions that produce an enum representation?~~ 
-  - Ended up defining functions
-  

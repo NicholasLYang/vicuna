@@ -1,0 +1,7 @@
+import { Person } from "./person";
+
+fn print_name(p: Person) {
+  print(p.name);
+}
+
+print_name(Person { name: "Alex" });

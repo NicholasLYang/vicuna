@@ -1,0 +1,40 @@
+enum Token {
+  Plus,
+  Minus,
+  Star,
+  Slash,
+  Integer(i32)
+}
+
+enum Error {
+  InvalidCharacter { c: char }
+}
+
+fn tokenize(input: string) -> Result<Token[], Error> {
+  let out = [];
+  for s in input {
+       match s {
+          '+' => {
+              out.push(Token::Plus);
+          },
+          '-' => {
+              out.push(Token::Minus);
+          },
+          '*' => {
+                out.push(Token::Star);
+          },
+          '/' => {
+                out.push(Token::Slash);
+          },
+          s => {
+             if s.matches(/[0-9]/) {
+                print("integer found");
+             }
+          }
+       };
+  }
+
+  print(out);
+}
+
+tokenize("+-*/");

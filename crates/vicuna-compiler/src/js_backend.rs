@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, Expr, ExprBlock, ExprFields, Function, ImportType, MatchBindings, PostFix, Program,
-    Span, Stmt, TypeDeclaration, TypeFields, UnaryOp, Value,
+    BinaryOp, Expr, ExprBlock, ExprFields, Function, ImportType, MatchBindings, MatchCase, PostFix,
+    Program, Span, Stmt, TypeDeclaration, TypeFields, UnaryOp, Value,
 };
 use anyhow::Result;
 use std::io::Write;
@@ -8,7 +8,7 @@ use std::mem;
 
 // We need to keep track of whether we're emitting an expression block
 // as the last expression of a function, in which case we want to add
-// a return statement to the last expression, or whether we're emitting
+// a return statement to the last expression, or if we're emitting
 // it as a variable binding, in which case we want to assign the result
 // to the variable.
 enum ExprBlockState {
@@ -50,6 +50,7 @@ impl<T: Write> JsBackend<T> {
 
     // Emits the standard preamble for Vicuna
     pub fn emit_preamble(&mut self) -> Result<()> {
+        self.output.write_all(include_bytes!("stdlib.js"))?;
         Ok(self.output.write_all(b"let __match__;\n")?)
     }
 
@@ -79,6 +80,11 @@ impl<T: Write> JsBackend<T> {
                 self.emit_expr(rhs)?;
                 self.output.write_all(b";\n")?;
             }
+            Stmt::Export { name } => {
+                self.output.write_all(b"export { ")?;
+                self.output.write_all(name.0.as_bytes())?;
+                self.output.write_all(b" };\n")?;
+            }
             Stmt::Expr(expr) => {
                 self.emit_expr(expr)?;
                 self.output.write_all(b";\n")?;
@@ -94,26 +100,13 @@ impl<T: Write> JsBackend<T> {
                     }
                 }
                 writeln!(self.output, ") {{")?;
-                for stmt in &body.0.stmts {
-                    self.emit_stmt(stmt)?;
-                }
 
                 let old_expression_block_state = mem::replace(
                     &mut self.expression_block_state,
                     Some(ExprBlockState::Return),
                 );
 
-                match body.0.end_expr.as_deref() {
-                    Some(block_expr @ Span(Expr::If { .. } | Expr::Match { .. }, _)) => {
-                        self.emit_expr(block_expr)?;
-                    }
-                    Some(end_expr) => {
-                        self.output.write_all(b"return ")?;
-                        self.emit_expr(end_expr)?;
-                        self.output.write_all(b";\n")?;
-                    }
-                    _ => {}
-                }
+                self.emit_expression_block(body)?;
 
                 self.expression_block_state = old_expression_block_state;
 
@@ -142,7 +135,7 @@ impl<T: Write> JsBackend<T> {
                 iterator,
                 body,
             } => {
-                write!(self.output, "for (const {} of", &iterator_variable.0)?;
+                write!(self.output, "for (const {} of ", &iterator_variable.0)?;
                 self.emit_expr(iterator)?;
                 writeln!(self.output, ") {{")?;
                 for stmt in body {
@@ -218,10 +211,47 @@ impl<T: Write> JsBackend<T> {
                     }
                 }
             }
+            Stmt::Import {
+                ty: Span(ImportType::Internal, _),
+                default_import,
+                named_imports,
+                path,
+            } => {
+                self.output.write_all(b"import ")?;
+                if let Some(default_import) = default_import {
+                    self.output.write_all(default_import.0.as_bytes())?;
+                }
+                if !named_imports.is_empty() {
+                    if default_import.is_some() {
+                        self.output.write_all(b", ")?;
+                    }
+
+                    self.output.write_all(b"{ ")?;
+                    for (idx, name) in named_imports.iter().enumerate() {
+                        self.output.write_all(name.0.as_bytes())?;
+                        if idx != named_imports.len() - 1 {
+                            self.output.write_all(b", ")?;
+                        }
+                    }
+                    self.output.write_all(b" }")?;
+                }
+
+                self.output.write_all(b" from \"")?;
+                self.output.write_all(path.0.as_bytes())?;
+                self.output.write_all(b".v.mjs")?;
+                self.output.write_all(b"\";\n")?;
+            }
             // TODO: Add TypeScript type generation
-            Stmt::Type(_) => {}
+            Stmt::Type(TypeDeclaration::Struct { name, .. }) => {
+                self.output.write_all(b"// struct ")?;
+                self.output.write_all(name.0.as_bytes())?;
+                self.output.write_all(b"\n")?;
+                self.output.write_all(b"const ")?;
+                self.output.write_all(name.0.as_bytes())?;
+                // TODO: Figure out a runtime value for a type
+                self.output.write_all(b" = {};\n")?;
+            }
             Stmt::Use { .. } => {}
-            Stmt::Import { .. } => todo!("internal imports not implemented yet"),
         }
         Ok(())
     }
@@ -232,12 +262,7 @@ impl<T: Write> JsBackend<T> {
                 self.emit_value(value)?;
             }
             Expr::Variable(name) => {
-                // TODO: Figure out better way of mapping special names
-                if name == "print" {
-                    self.output.write_all(b"console.log")?;
-                } else {
-                    self.output.write_all(name.as_bytes())?;
-                }
+                self.output.write_all(name.as_bytes())?;
             }
             Expr::PostFix(callee, Span(PostFix::Args(args), _)) => {
                 self.emit_expr(callee)?;
@@ -274,11 +299,21 @@ impl<T: Write> JsBackend<T> {
                     BinaryOp::LessThanOrEqual => b"<=",
                     BinaryOp::Equal => b"===",
                     BinaryOp::NotEqual => b"!==",
+                    BinaryOp::Assign => b"=",
                 };
 
+                // We pre-emptively wrap assignments in parentheses
+                // to avoid JavaScript thinking the entire left hand
+                // side is part of the assignment.
+                if op.0 == BinaryOp::Assign {
+                    self.output.write_all(b"(")?;
+                }
                 self.emit_expr(lhs)?;
                 self.output.write_all(op_str)?;
                 self.emit_expr(rhs)?;
+                if op.0 == BinaryOp::Assign {
+                    self.output.write_all(b")")?;
+                }
             }
             Expr::Unary(op, rhs) => {
                 let op_str = match op.0 {
@@ -300,11 +335,14 @@ impl<T: Write> JsBackend<T> {
             Expr::Enum {
                 variant_name,
                 fields,
-                ..
+                enum_name,
             } => {
                 self.output.write_all(b"{")?;
                 self.output.write_all(b" \"__type__\": \"")?;
                 self.output.write_all(variant_name.0.as_bytes())?;
+                self.output.write_all(b"\", ")?;
+                self.output.write_all(b" \"__enum__\": \"")?;
+                self.output.write_all(enum_name.0.as_bytes())?;
                 self.output.write_all(b"\", ")?;
                 self.emit_expr_fields(fields)?;
                 self.output.write_all(b"}")?;
@@ -329,14 +367,53 @@ impl<T: Write> JsBackend<T> {
                 self.emit_expr(expr)?;
                 self.output.write_all(b";\n")?;
 
-                self.output.write_all(b"switch (__match__.__type__) {\n")?;
-                for (case, body) in cases {
-                    self.output.write_all(b"case \"")?;
-                    self.output.write_all(case.0.variant_name.0.as_bytes())?;
-                    self.output.write_all(b"\": {\n")?;
+                // This is a quick hack to determine if we should
+                // match on the `__type__` field of the match expression,
+                // or on the match expression directly.
+                let mut is_enum = false;
+                for (case, _) in cases {
+                    match &case.0 {
+                        MatchCase::Enum { .. } => is_enum = true,
+                        _ => {}
+                    }
+                }
 
-                    if let Some(bindings) = &case.0.fields {
-                        self.emit_match_bindings(bindings)?;
+                if is_enum {
+                    self.output.write_all(b"switch (__match__.__type__) {\n")?;
+                } else {
+                    self.output.write_all(b"switch (__match__) {\n")?;
+                }
+                for (case, body) in cases {
+                    match &case.0 {
+                        MatchCase::Enum {
+                            variant_name,
+                            fields,
+                            ..
+                        } => {
+                            self.output.write_all(b"case \"")?;
+                            self.output.write_all(variant_name.0.as_bytes())?;
+                            self.output.write_all(b"\": {\n")?;
+
+                            if let Some(bindings) = fields {
+                                self.emit_match_bindings(bindings)?;
+                            }
+                        }
+                        MatchCase::String(s) => {
+                            self.output.write_all(b"case \"")?;
+                            self.output.write_all(s.as_bytes())?;
+                            self.output.write_all(b"\": {\n")?;
+                        }
+                        MatchCase::Char(c) => {
+                            self.output.write_all(b"case \"")?;
+                            self.output.write_all(c.to_string().as_bytes())?;
+                            self.output.write_all(b"\": {\n")?;
+                        }
+                        MatchCase::Variable(name) => {
+                            self.output.write_all(b"default: {\n")?;
+                            self.output.write_all(b"const ")?;
+                            self.output.write_all(name.0.as_bytes())?;
+                            self.output.write_all(b" = __match__;\n")?;
+                        }
                     }
 
                     self.emit_expression_block(body)?;
@@ -344,6 +421,16 @@ impl<T: Write> JsBackend<T> {
                     self.output.write_all(b"}\n")?;
                 }
                 self.output.write_all(b"}")?;
+            }
+            Expr::Array(elements) => {
+                self.output.write_all(b"[")?;
+                for (idx, element) in elements.iter().enumerate() {
+                    self.emit_expr(element)?;
+                    if idx < elements.len() - 1 {
+                        self.output.write_all(b", ")?;
+                    }
+                }
+                self.output.write_all(b"]")?;
             }
         }
 
@@ -404,14 +491,11 @@ impl<T: Write> JsBackend<T> {
         Ok(())
     }
 
-    fn emit_expression_block(&mut self, block: &Span<ExprBlock>) -> Result<()> {
-        for stmt in &block.0.stmts {
-            self.emit_stmt(stmt)?;
-        }
-        match block.0.end_expr.as_deref() {
+    fn emit_end_expr(&mut self, end_expr: Option<&Span<Expr>>) -> Result<()> {
+        match end_expr.as_deref() {
             // If the end expression is an if expression, we don't bind or return,
             // and let the if expression determine that itself.
-            Some(if_expr @ Span(Expr::If { .. }, _)) => {
+            Some(if_expr @ Span(Expr::If { .. } | Expr::Match { .. }, _)) => {
                 self.emit_expr(if_expr)?;
             }
             Some(end_expr) => {
@@ -442,6 +526,16 @@ impl<T: Write> JsBackend<T> {
         Ok(())
     }
 
+    fn emit_expression_block(&mut self, block: &Span<ExprBlock>) -> Result<()> {
+        for stmt in &block.0.stmts {
+            self.emit_stmt(stmt)?;
+        }
+
+        self.emit_end_expr(block.0.end_expr.as_deref())?;
+
+        Ok(())
+    }
+
     fn emit_value(&mut self, value: &Value) -> Result<()> {
         match value {
             Value::I32(i) => {
@@ -455,6 +549,12 @@ impl<T: Write> JsBackend<T> {
             }
             Value::String(s) => {
                 write!(self.output, "\"{}\"", s)?;
+            }
+            Value::Char(c) => {
+                write!(self.output, "\"{}\"", c)?;
+            }
+            Value::Regex(regex) => {
+                write!(self.output, "/{}/", regex)?;
             }
         }
 

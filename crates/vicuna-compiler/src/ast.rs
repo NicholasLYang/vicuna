@@ -61,6 +61,14 @@ impl<T: Debug + Clone + PartialEq> Fields<T> {
             Fields::Empty => Fields::Empty,
         }
     }
+
+    pub fn for_each(&self, mut f: impl FnMut(&Span<T>) -> ()) {
+        match self {
+            Fields::Named(fields) => fields.iter().for_each(|(_, value)| f(value)),
+            Fields::Tuple(fields) => fields.iter().for_each(f),
+            Fields::Empty => (),
+        }
+    }
 }
 
 pub type TypeFields = Fields<TypeSig>;
@@ -109,6 +117,9 @@ pub enum Stmt {
         default_import: Option<Span<String>>,
         named_imports: Vec<Span<String>>,
         path: Span<String>,
+    },
+    Export {
+        name: Span<String>,
     },
     Type(TypeDeclaration),
     // The equivalent of OCaml's open, basically put a variant in scope. I'll probably end
@@ -183,13 +194,19 @@ pub enum Expr {
         expr: Box<Span<Expr>>,
         cases: Vec<(Span<MatchCase>, Span<ExprBlock>)>,
     },
+    Array(Vec<Span<Expr>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct MatchCase {
-    pub enum_name: Span<String>,
-    pub variant_name: Span<String>,
-    pub fields: Option<MatchBindings>,
+pub enum MatchCase {
+    Enum {
+        enum_name: Span<String>,
+        variant_name: Span<String>,
+        fields: Option<MatchBindings>,
+    },
+    String(String),
+    Char(char),
+    Variable(Span<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -221,7 +238,9 @@ pub enum TypeSig {
     I32,
     F32,
     String,
+    Char,
     Bool,
+    Array(Box<Span<TypeSig>>),
     Named(Span<String>, Vec<Span<TypeSig>>),
 }
 
@@ -233,10 +252,13 @@ pub enum Value {
     F32(f32),
     Bool(bool),
     String(String),
+    Char(char),
+    Regex(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum BinaryOp {
+    Assign,
     Add,
     Subtract,
     Divide,

@@ -10,7 +10,7 @@ use std::ops::Range;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Error, Diagnostic)]
-pub enum ParseError {
+pub enum ParseDiagnostic {
     #[diagnostic(code(parse_error::expected_found))]
     #[error("Expected {expected_chars:?} but found {received_char:?}")]
     ExpectedFound {
@@ -21,7 +21,7 @@ pub enum ParseError {
     },
 }
 
-impl chumsky::Error<char> for ParseError {
+impl chumsky::Error<char> for ParseDiagnostic {
     type Span = Range<usize>;
     type Label = ();
 
@@ -58,7 +58,7 @@ impl chumsky::Error<char> for ParseError {
     }
 }
 
-fn comment() -> impl Parser<char, (), Error = ParseError> + Clone {
+fn comment() -> impl Parser<char, (), Error = ParseDiagnostic> + Clone {
     let single_line = just("//").then(take_until(text::newline())).ignored();
 
     let multi_line = just("/*").then(take_until(just("*/"))).ignored();
@@ -66,20 +66,25 @@ fn comment() -> impl Parser<char, (), Error = ParseError> + Clone {
     single_line.or(multi_line)
 }
 
-fn optional_comment() -> impl Parser<char, (), Error = ParseError> + Clone {
+fn optional_comment() -> impl Parser<char, (), Error = ParseDiagnostic> + Clone {
     comment().or(empty())
 }
 
-fn string() -> impl Parser<char, String, Error = ParseError> + Clone {
-    let string_char = none_of('"').or(just('\\').ignore_then(any()));
+fn string_char() -> impl Parser<char, char, Error = ParseDiagnostic> + Clone {
+    none_of('"').or(just('\\').ignore_then(any()))
+}
+
+fn string() -> impl Parser<char, String, Error = ParseDiagnostic> + Clone {
     just('"')
-        .ignore_then(string_char.repeated())
+        .ignore_then(string_char().repeated())
         .then_ignore(just('"'))
         .padded_by(optional_comment())
         .map(|chars| chars.into_iter().collect())
 }
 
-pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> + Clone {
+/// Parses basic expressions like binary operators and atoms. Does not parse
+/// anything with a block like match or if expressions.
+pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseDiagnostic> + Clone {
     let ident = text::ident().padded().padded_by(optional_comment());
     recursive(|expr| {
         let int = text::int(10)
@@ -102,9 +107,17 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
             .padded_by(optional_comment())
             .to(true)
             .or(keyword("false").padded_by(optional_comment()).to(false))
-            .map_with_span(|b, span| Span(Expr::Value(Value::Bool(b)), span));
+            .map_with_span(|b, span| Span(Expr::Value(Value::Bool(b)), span))
+            .boxed();
 
-        let string = string().map_with_span(|s, span| Span(Expr::Value(Value::String(s)), span));
+        // TODO: Add escapes
+        let char = string_char()
+            .delimited_by(just('\''), just('\''))
+            .map_with_span(|c, span| Span(Expr::Value(Value::Char(c)), span));
+
+        let string = string()
+            .map_with_span(|s, span| Span(Expr::Value(Value::String(s)), span))
+            .boxed();
 
         let named_fields = ident
             .clone()
@@ -145,25 +158,51 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
                     },
                     span,
                 )
-            });
+            })
+            .boxed();
 
         let struct_literal = ident
             .clone()
             .map_with_span(Span)
             .then(named_fields)
-            .map_with_span(|(name, fields), span| Span(Expr::Struct(name, fields), span));
+            .map_with_span(|(name, fields), span| Span(Expr::Struct(name, fields), span))
+            .boxed();
 
-        let atom = float
-            .or(int)
-            .or(expr.clone().delimited_by(just('('), just(')')))
-            .or(bool)
-            .or(string)
-            .or(enum_literal)
-            .or(struct_literal)
-            .or(ident
+        let array_literal = expr
+            .clone()
+            .separated_by(just(','))
+            .allow_trailing()
+            .delimited_by(just('['), just(']'))
+            .map(Expr::Array)
+            .map_with_span(Span)
+            .boxed();
+
+        let regex_char = none_of('/').or(just('\\').ignore_then(any()));
+
+        let regex_literal = just('/')
+            .ignore_then(regex_char.repeated())
+            .then_ignore(just('/'))
+            .padded_by(optional_comment())
+            .map(|chars| chars.into_iter().collect::<String>())
+            .map_with_span(|s, span| Span(Expr::Value(Value::Regex(s)), span))
+            .boxed();
+
+        let atom = choice((
+            float,
+            int,
+            char,
+            expr.clone().delimited_by(just('('), just(')')),
+            bool,
+            string,
+            enum_literal,
+            struct_literal,
+            array_literal,
+            regex_literal,
+            ident
                 .clone()
-                .map_with_span(|i, span| Span(Expr::Variable(i), span)))
-            .padded();
+                .map_with_span(|i, span| Span(Expr::Variable(i), span)),
+        ))
+        .padded();
 
         let args = expr
             .clone()
@@ -232,48 +271,80 @@ pub(crate) fn expression() -> impl Parser<char, Span<Expr>, Error = ParseError> 
                 Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
             });
 
-        addition
+        let comparison = addition
             .clone()
             .then(
-                op('>')
-                    .to(BinaryOp::GreaterThan)
-                    .or(op('<').to(BinaryOp::LessThan))
-                    .or(op2(">=").to(BinaryOp::GreaterThanOrEqual))
-                    .or(op2("<=").to(BinaryOp::LessThanOrEqual))
-                    .or(op2("==").to(BinaryOp::Equal))
-                    .or(op2("!=").to(BinaryOp::NotEqual))
-                    .map_with_span(Span)
-                    .then(addition)
-                    .repeated(),
+                choice((
+                    op('>').to(BinaryOp::GreaterThan),
+                    op('<').to(BinaryOp::LessThan),
+                    op2(">=").to(BinaryOp::GreaterThanOrEqual),
+                    op2("<=").to(BinaryOp::LessThanOrEqual),
+                    op2("==").to(BinaryOp::Equal),
+                    op2("!=").to(BinaryOp::NotEqual),
+                ))
+                .map_with_span(Span)
+                .then(addition)
+                .repeated(),
             )
             .foldl(|lhs, (op, rhs)| {
                 let span = (lhs.1.start())..(rhs.1.end());
                 Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
+            });
+
+        comparison
+            .clone()
+            .then(
+                op('=')
+                    .to(BinaryOp::Assign)
+                    .map_with_span(Span)
+                    .then(comparison)
+                    .map(Some)
+                    .or(empty().to(None)),
+            )
+            .map_with_span(|(lhs, rhs), span| {
+                if let Some((op, rhs)) = rhs {
+                    Span(Expr::Binary(op, Box::new(lhs), Box::new(rhs)), span)
+                } else {
+                    lhs
+                }
             })
+            .padded()
     })
 }
 
-fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseError> + Clone {
+fn type_signature() -> impl Parser<char, Span<TypeSig>, Error = ParseDiagnostic> + Clone {
     recursive(|type_sig| {
-        just("i32")
+        let array = just('[')
             .padded()
-            .to(TypeSig::I32)
-            .or(just("f32").padded().to(TypeSig::F32))
-            .or(just("string").padded().to(TypeSig::String))
-            .or(just("bool").padded().to(TypeSig::Bool))
-            .or(ident()
+            .then(just(']').padded())
+            .map_with_span(Span);
+
+        choice((
+            just("i32").padded().to(TypeSig::I32),
+            just("f32").padded().to(TypeSig::F32),
+            just("string").padded().to(TypeSig::String),
+            just("bool").padded().to(TypeSig::Bool),
+            just("char").padded().to(TypeSig::Char),
+            ident()
                 .then(
                     type_sig
                         .separated_by(just(','))
                         .delimited_by(just('<'), just('>')),
                 )
-                .map(|(name, args)| TypeSig::Named(name, args)))
-            .or(ident().map(|name| TypeSig::Named(name, vec![])))
-            .map_with_span(Span)
+                .map(|(name, args)| TypeSig::Named(name, args)),
+            ident().map(|name| TypeSig::Named(name, vec![])),
+        ))
+        .map_with_span(Span)
+        .then(array.repeated())
+        .foldl(|ty, array| {
+            let range = (ty.1.start())..(array.1.end());
+
+            Span(TypeSig::Array(Box::new(ty)), range)
+        })
     })
 }
 
-fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone {
+fn ident() -> impl Parser<char, Span<String>, Error = ParseDiagnostic> + Clone {
     text::ident()
         .padded()
         .padded_by(optional_comment())
@@ -282,15 +353,15 @@ fn ident() -> impl Parser<char, Span<String>, Error = ParseError> + Clone {
 
 pub fn just_padded<C: OrderedContainer<char> + Clone>(
     inputs: C,
-) -> impl Parser<char, C, Error = ParseError> + Clone {
+) -> impl Parser<char, C, Error = ParseDiagnostic> + Clone {
     just(inputs).padded_by(optional_comment())
 }
 
-pub fn keyword(s: &'static str) -> impl Parser<char, (), Error = ParseError> + Clone {
+pub fn keyword(s: &'static str) -> impl Parser<char, (), Error = ParseDiagnostic> + Clone {
     text::keyword(s).padded_by(optional_comment())
 }
 
-fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> {
+fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseDiagnostic> {
     let ident = ident();
 
     let field = ident
@@ -367,7 +438,7 @@ fn type_declaration() -> impl Parser<char, TypeDeclaration, Error = ParseError> 
     enum_declaration.or(struct_declaration)
 }
 
-fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
+fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseDiagnostic> {
     recursive(|stmt| {
         let ident = ident();
 
@@ -428,7 +499,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .delimited_by(just_padded('('), just_padded(')'))
             .map(|bindings| MatchBindings::Tuple(bindings.into_iter().collect::<Vec<_>>()));
 
-        let match_pattern = ident
+        let enum_match_pattern = ident
             .clone()
             .then_ignore(just_padded("::"))
             .then(ident.clone())
@@ -441,7 +512,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .padded()
             .map_with_span(|((enum_name, variant_name), fields), span| {
                 Span(
-                    MatchCase {
+                    MatchCase::Enum {
                         enum_name,
                         variant_name,
                         fields,
@@ -450,19 +521,38 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 )
             });
 
+        let string_match_pattern = string()
+            .map_with_span(|s, span| Span(MatchCase::String(s), span))
+            .padded();
+
+        let char_match_pattern = just('\'')
+            .ignore_then(string_char())
+            .then_ignore(just('\''))
+            .map_with_span(|c, span| Span(MatchCase::Char(c), span))
+            .padded();
+
+        let var_match_pattern = ident
+            .clone()
+            .map_with_span(|s, span| Span(MatchCase::Variable(s), span));
+
         match_expression.define(
             keyword("match")
                 .padded()
                 .ignore_then(expression().map(Box::new))
                 .then(
-                    match_pattern
-                        .then_ignore(just_padded("=>"))
-                        .then(expression_block.clone().map_with_span(Span))
-                        .padded()
-                        .separated_by(just_padded(','))
-                        .allow_trailing()
-                        .padded()
-                        .delimited_by(just_padded('{'), just_padded('}')),
+                    choice((
+                        enum_match_pattern,
+                        string_match_pattern,
+                        char_match_pattern,
+                        var_match_pattern,
+                    ))
+                    .then_ignore(just_padded("=>"))
+                    .then(expression_block.clone().map_with_span(Span))
+                    .padded()
+                    .separated_by(just_padded(','))
+                    .allow_trailing()
+                    .padded()
+                    .delimited_by(just_padded('{'), just_padded('}')),
                 )
                 .map_with_span(|(expr, cases), span| Span(Expr::Match { expr, cases }, span)),
         );
@@ -519,7 +609,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .then_ignore(just_padded('='))
             .then(
                 if_expression
-                    .or(match_expression)
+                    .or(match_expression.clone())
                     .or(expression().padded().then_ignore(just_padded(';'))),
             )
             .map_with_span(|(ident, expr), span| Span(Stmt::Let(ident, expr), span));
@@ -588,6 +678,7 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .then_ignore(just_padded(',').padded().to(()).or(empty()))
             .then(
                 ident
+                    .clone()
                     .separated_by(just_padded(','))
                     .allow_trailing()
                     .delimited_by(just_padded('{'), just_padded('}'))
@@ -610,6 +701,12 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
                 },
             );
 
+        let export_stmt = keyword("export")
+            .padded()
+            .ignore_then(ident)
+            .then_ignore(just_padded(';'))
+            .map_with_span(|name, span| Span(Stmt::Export { name }, span));
+
         let type_declaration =
             type_declaration().map_with_span(|decl, span| Span(Stmt::Type(decl), span));
 
@@ -618,23 +715,29 @@ fn statement() -> impl Parser<char, Span<Stmt>, Error = ParseError> {
             .then_ignore(just_padded(';'))
             .map_with_span(|expr, span| Span(Stmt::Return(expr), span));
 
-        function_decl
-            .or(let_decl)
-            .or(if_stmt)
-            .or(for_stmt)
-            .or(return_stmt)
-            .or(import_stmt)
-            .or(type_declaration)
-            .or(use_stmt)
-            .or(expression()
+        choice((
+            function_decl,
+            let_decl,
+            if_stmt,
+            for_stmt,
+            return_stmt,
+            import_stmt,
+            type_declaration,
+            use_stmt,
+            export_stmt,
+            match_expression
                 .then_ignore(just_padded(';'))
-                .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)))
-            .padded()
-            .padded_by(optional_comment())
+                .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)),
+            expression()
+                .then_ignore(just_padded(';'))
+                .map_with_span(|expr, span| Span(Stmt::Expr(expr), span)),
+        ))
+        .padded()
+        .padded_by(optional_comment())
     })
 }
 
-fn parser() -> impl Parser<char, Vec<Span<Stmt>>, Error = ParseError> {
+fn parser() -> impl Parser<char, Vec<Span<Stmt>>, Error = ParseDiagnostic> {
     comment()
         .to(None)
         .or(statement().map(Some))
@@ -643,7 +746,7 @@ fn parser() -> impl Parser<char, Vec<Span<Stmt>>, Error = ParseError> {
         .then_ignore(end())
 }
 
-pub fn parse(source: &str) -> (Option<Program>, Vec<ParseError>) {
+pub fn parse(source: &str) -> (Option<Program>, Vec<ParseDiagnostic>) {
     let (output, errors) = parser().parse_recovery(source);
     let program = output.map(|statements| Program { statements });
 

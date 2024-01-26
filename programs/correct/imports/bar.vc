@@ -1,0 +1,3 @@
+import { c } from "./qux";
+let a = 24 * c;
+export a;

@@ -1,9 +1,9 @@
 use anyhow::Result;
-use std::path::Path;
+use camino::Utf8Path;
 use std::process::Command;
 use which::which;
 
-pub fn execute_file(file_path: &Path) -> Result<()> {
+pub fn execute_file(file_path: &Utf8Path) -> Result<()> {
     println!("=================");
     let exit_status = Command::new(which("node")?)
         .arg(file_path)
